@@ -1,55 +1,96 @@
--- Enable UUID extension if not already enabled
+-- Pine Journal — Full Schema
+-- Run: psql -U postgres -h localhost -d pine -f schema.sql
+
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- -----------------------------------------------------------------------------
--- 1. Users Table
--- -----------------------------------------------------------------------------
+-- ─── Users ──────────────────────────────────────────────────
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255), -- Nullable if user only signs within via social login
-    is_email_verified BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
-    role VARCHAR(50) NOT NULL DEFAULT 'USER',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email         VARCHAR(255) NOT NULL UNIQUE,
+    name          VARCHAR(200) NOT NULL DEFAULT '',
+    password_hash VARCHAR(255) NOT NULL,
+    is_verified   BOOLEAN NOT NULL DEFAULT FALSE,
+    otp_code      VARCHAR(6),
+    otp_expires   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- Index for fast login lookups
 CREATE INDEX idx_users_email ON users(email);
 
--- -----------------------------------------------------------------------------
--- 2. Social Accounts Table (Federated Identities)
--- -----------------------------------------------------------------------------
-CREATE TABLE social_accounts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    provider VARCHAR(50) NOT NULL, -- e.g., 'google', 'facebook', 'github'
-    provider_id VARCHAR(255) NOT NULL, -- Unique ID from the provider
-    email VARCHAR(255), -- Email stored in the social account (may match or differ from main user email)
-    avatar_url TEXT,
-    access_token TEXT, -- Optional: Store encrypted if acting on behalf of user
-    refresh_token TEXT, -- Optional: Store encrypted if offline access needed
-    expires_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+-- ─── Collections (tags) ─────────────────────────────────────
+CREATE TABLE collections (
+    id         SERIAL PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       VARCHAR(100) NOT NULL,
+    color      VARCHAR(30)  NOT NULL DEFAULT '#2196F3',
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_collections_user ON collections(user_id);
 
-    -- Ensure a provider ID is unique for that provider (e.g. only one Google user 12345)
-    UNIQUE(provider, provider_id)
+-- ─── Moods ──────────────────────────────────────────────────
+CREATE TABLE moods (
+    id         SERIAL PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       VARCHAR(100) NOT NULL,
+    emoji      VARCHAR(100) NOT NULL DEFAULT '',
+    color      VARCHAR(30)  NOT NULL DEFAULT '#FF9800',
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_moods_user ON moods(user_id);
+
+-- ─── Chapters ───────────────────────────────────────────────
+CREATE TABLE chapters (
+    id            SERIAL PRIMARY KEY,
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title         VARCHAR(300) NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    color         VARCHAR(30)  NOT NULL DEFAULT '#2196F3',
+    is_favourite  BOOLEAN NOT NULL DEFAULT FALSE,
+    is_archived   BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_chapters_user ON chapters(user_id);
+
+-- ─── Chapter ↔ Collection (M2M) ────────────────────────────
+CREATE TABLE chapter_collections (
+    chapter_id    INT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    collection_id INT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    PRIMARY KEY (chapter_id, collection_id)
 );
 
--- Index for looking up users by social tokens
-CREATE INDEX idx_social_provider ON social_accounts(provider, provider_id);
-
--- -----------------------------------------------------------------------------
--- 3. User Profiles Table
--- -----------------------------------------------------------------------------
-CREATE TABLE user_profiles (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    first_name VARCHAR(100),
-    last_name VARCHAR(100),
-    nickname VARCHAR(50),
-    avatar_url TEXT,
-    bio TEXT,
-    personality TEXT, -- Can be changed to JSONB if structured data is required
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- ─── Entries ────────────────────────────────────────────────
+CREATE TABLE entries (
+    id            SERIAL PRIMARY KEY,
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title         VARCHAR(500) NOT NULL DEFAULT 'Untitled',
+    content       TEXT NOT NULL DEFAULT '',
+    chapter_id    INT REFERENCES chapters(id) ON DELETE SET NULL,
+    mood_id       INT REFERENCES moods(id) ON DELETE SET NULL,
+    is_favourite  BOOLEAN NOT NULL DEFAULT FALSE,
+    is_archived   BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX idx_entries_user    ON entries(user_id);
+CREATE INDEX idx_entries_chapter ON entries(chapter_id);
+
+-- ─── Entry ↔ Collection (M2M) ──────────────────────────────
+CREATE TABLE entry_collections (
+    entry_id      INT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    collection_id INT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, collection_id)
+);
+
+-- ─── Updated-at trigger ─────────────────────────────────────
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_users_updated    BEFORE UPDATE ON users    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_chapters_updated BEFORE UPDATE ON chapters FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_entries_updated  BEFORE UPDATE ON entries  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
