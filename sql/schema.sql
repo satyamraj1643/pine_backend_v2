@@ -66,7 +66,6 @@ CREATE TABLE entries (
     title         VARCHAR(500) NOT NULL DEFAULT 'Untitled',
     content       TEXT NOT NULL DEFAULT '',
     chapter_id    INT REFERENCES chapters(id) ON DELETE SET NULL,
-    mood_id       INT REFERENCES moods(id) ON DELETE SET NULL,
     is_favourite  BOOLEAN NOT NULL DEFAULT FALSE,
     is_archived   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -74,6 +73,13 @@ CREATE TABLE entries (
 );
 CREATE INDEX idx_entries_user    ON entries(user_id);
 CREATE INDEX idx_entries_chapter ON entries(chapter_id);
+
+-- ─── Entry ↔ Mood (M2M) ────────────────────────────────────
+CREATE TABLE entry_moods (
+    entry_id INT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    mood_id  INT NOT NULL REFERENCES moods(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, mood_id)
+);
 
 -- ─── Entry ↔ Collection (M2M) ──────────────────────────────
 CREATE TABLE entry_collections (

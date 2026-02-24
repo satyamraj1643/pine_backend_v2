@@ -126,6 +126,51 @@ func GetAllCollections(w http.ResponseWriter, r *http.Request) {
 	helpers.JSON(w, http.StatusOK, resp)
 }
 
+// ─── Update Collection ──────────────────────────────────
+
+func UpdateCollection(w http.ResponseWriter, r *http.Request) {
+	userID := helpers.GetUserID(r)
+
+	id, err := helpers.PathParamInt(r.URL.Path, "/collections/update/")
+	if err != nil {
+		helpers.Error(w, http.StatusBadRequest, "invalid collection id")
+		return
+	}
+
+	var body struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	}
+	if err := helpers.Decode(r, &body); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Name == "" || body.Color == "" {
+		helpers.Error(w, http.StatusBadRequest, "name and color are required")
+		return
+	}
+
+	ctx := context.Background()
+	tag, err := db.Pool.Exec(ctx,
+		`UPDATE collections SET name = $1, color = $2 WHERE id = $3 AND user_id = $4`,
+		body.Name, body.Color, id, userID,
+	)
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "failed to update collection")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		helpers.Error(w, http.StatusNotFound, "collection not found")
+		return
+	}
+
+	_ = cache.Del(ctx, "collections:"+userID)
+	_ = cache.Del(ctx, "entries:"+userID)
+	_ = cache.Del(ctx, "chapters:"+userID)
+
+	helpers.JSON(w, http.StatusOK, map[string]interface{}{"updated": true, "id": id, "name": body.Name, "color": body.Color})
+}
+
 // ─── Delete Collection ──────────────────────────────────
 
 func DeleteCollection(w http.ResponseWriter, r *http.Request) {

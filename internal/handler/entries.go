@@ -18,7 +18,7 @@ type createEntryReq struct {
 	Title      string `json:"title"`
 	Content    string `json:"content"`
 	Chapter    *int   `json:"chapter"`
-	Mood       *int   `json:"mood"`
+	Mood       []int  `json:"mood"`
 	Collection []int  `json:"collection"`
 }
 
@@ -26,7 +26,7 @@ type updateEntryReq struct {
 	Title      *string `json:"title"`
 	Content    *string `json:"content"`
 	Chapter    *int    `json:"chapter"`
-	Mood       *int    `json:"mood"`
+	Mood       *[]int  `json:"mood"`
 	Collection *[]int  `json:"collection"`
 }
 
@@ -62,7 +62,7 @@ type entryDTO struct {
 	Title       string          `json:"Title"`
 	Content     string          `json:"Content"`
 	Chapter     *chapterDTO     `json:"Chapter"`
-	Mood        *moodDTO        `json:"Mood"`
+	Moods       []moodDTO       `json:"Moods"`
 	Collections []collectionDTO `json:"Collections"`
 	IsFavourite bool            `json:"IsFavourite"`
 	IsArchived  bool            `json:"IsArchived"`
@@ -89,14 +89,21 @@ func CreateEntry(w http.ResponseWriter, r *http.Request) {
 
 	var entryID int
 	err := db.Pool.QueryRow(ctx,
-		`INSERT INTO entries (user_id, title, content, chapter_id, mood_id, is_favourite, is_archived, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, false, false, NOW(), NOW())
+		`INSERT INTO entries (user_id, title, content, chapter_id, is_favourite, is_archived, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, false, false, NOW(), NOW())
 		 RETURNING id`,
-		userID, req.Title, req.Content, req.Chapter, req.Mood,
+		userID, req.Title, req.Content, req.Chapter,
 	).Scan(&entryID)
 	if err != nil {
 		helpers.Error(w, http.StatusInternalServerError, "Failed to create entry")
 		return
+	}
+
+	if len(req.Mood) > 0 {
+		if err := insertEntryMoods(ctx, entryID, req.Mood); err != nil {
+			helpers.Error(w, http.StatusInternalServerError, "Failed to link moods")
+			return
+		}
 	}
 
 	if len(req.Collection) > 0 {
@@ -107,6 +114,7 @@ func CreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
+	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
 	helpers.JSON(w, http.StatusCreated, map[string]bool{"created": true})
 }
@@ -131,16 +139,14 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query entries with optional chapter and mood via LEFT JOIN.
+	// Query entries with optional chapter via LEFT JOIN.
 	rows, err := db.Pool.Query(ctx,
 		`SELECT
 			e.id, e.title, e.content,
 			ch.id, ch.title, ch.color,
-			m.id, m.name, m.emoji, m.color,
 			e.is_favourite, e.is_archived, e.created_at, e.updated_at
 		 FROM entries e
 		 LEFT JOIN chapters ch ON ch.id = e.chapter_id
-		 LEFT JOIN moods m     ON m.id  = e.mood_id
 		 WHERE e.user_id = $1
 		 ORDER BY e.updated_at DESC`,
 		userID,
@@ -157,13 +163,10 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 		var e entryDTO
 		var chID *int
 		var chTitle, chColor *string
-		var mID *int
-		var mName, mEmoji, mColor *string
 
 		if err := rows.Scan(
 			&e.ID, &e.Title, &e.Content,
 			&chID, &chTitle, &chColor,
-			&mID, &mName, &mEmoji, &mColor,
 			&e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt,
 		); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "Failed to scan entry")
@@ -173,10 +176,8 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 		if chID != nil {
 			e.Chapter = &chapterDTO{ID: *chID, Title: *chTitle, Color: *chColor}
 		}
-		if mID != nil {
-			e.Mood = &moodDTO{ID: *mID, Name: *mName, Emoji: *mEmoji, Color: *mColor}
-		}
 
+		e.Moods = make([]moodDTO, 0)
 		e.Collections = make([]collectionDTO, 0)
 		entries = append(entries, e)
 	}
@@ -185,7 +186,7 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch collections for all entries in one query.
+	// Fetch moods and collections for all entries in batch queries.
 	if len(entries) > 0 {
 		entryIDs := make([]int, len(entries))
 		idxMap := make(map[int]int, len(entries)) // entry_id -> slice index
@@ -194,6 +195,30 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 			idxMap[e.ID] = i
 		}
 
+		// Batch fetch moods via entry_moods join table.
+		moodRows, err := db.Pool.Query(ctx,
+			`SELECT em.entry_id, m.id, m.name, m.emoji, m.color
+			 FROM entry_moods em
+			 JOIN moods m ON m.id = em.mood_id
+			 WHERE em.entry_id = ANY($1)`,
+			entryIDs,
+		)
+		if err == nil {
+			defer moodRows.Close()
+			for moodRows.Next() {
+				var entryID, mID int
+				var mName, mEmoji, mColor string
+				if err := moodRows.Scan(&entryID, &mID, &mName, &mEmoji, &mColor); err == nil {
+					if idx, ok := idxMap[entryID]; ok {
+						entries[idx].Moods = append(entries[idx].Moods, moodDTO{
+							ID: mID, Name: mName, Emoji: mEmoji, Color: mColor,
+						})
+					}
+				}
+			}
+		}
+
+		// Batch fetch collections via entry_collections join table.
 		colRows, err := db.Pool.Query(ctx,
 			`SELECT ec.entry_id, c.id, c.name, c.color
 			 FROM entry_collections ec
@@ -272,10 +297,6 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 		setClauses = append(setClauses, pgArg("chapter_id", &argIdx))
 		args = append(args, *req.Chapter)
 	}
-	if req.Mood != nil {
-		setClauses = append(setClauses, pgArg("mood_id", &argIdx))
-		args = append(args, *req.Mood)
-	}
 
 	// Always bump updated_at.
 	setClauses = append(setClauses, pgArg("updated_at", &argIdx))
@@ -295,6 +316,14 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Replace moods if provided.
+	if req.Mood != nil {
+		if err := replaceEntryMoods(ctx, entryID, *req.Mood); err != nil {
+			helpers.Error(w, http.StatusInternalServerError, "Failed to update moods")
+			return
+		}
+	}
+
 	// Replace collections if provided.
 	if req.Collection != nil {
 		if err := replaceEntryCollections(ctx, entryID, *req.Collection); err != nil {
@@ -304,6 +333,7 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
+	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
@@ -339,6 +369,7 @@ func DeleteEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
+	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -380,6 +411,7 @@ func ArchiveEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
+	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
@@ -421,11 +453,38 @@ func MarkFavouriteEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
+	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // ─── Helpers ─────────────────────────────────────────────
+
+// insertEntryMoods inserts rows into the entry_moods junction table.
+func insertEntryMoods(ctx context.Context, entryID int, moodIDs []int) error {
+	for _, mID := range moodIDs {
+		_, err := db.Pool.Exec(ctx,
+			`INSERT INTO entry_moods (entry_id, mood_id) VALUES ($1, $2)`,
+			entryID, mID,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replaceEntryMoods deletes existing links and inserts new ones.
+func replaceEntryMoods(ctx context.Context, entryID int, moodIDs []int) error {
+	_, err := db.Pool.Exec(ctx,
+		`DELETE FROM entry_moods WHERE entry_id = $1`,
+		entryID,
+	)
+	if err != nil {
+		return err
+	}
+	return insertEntryMoods(ctx, entryID, moodIDs)
+}
 
 // insertEntryCollections inserts rows into the entry_collections junction table.
 func insertEntryCollections(ctx context.Context, entryID int, collectionIDs []int) error {

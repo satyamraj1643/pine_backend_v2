@@ -107,6 +107,51 @@ func GetAllMoods(w http.ResponseWriter, r *http.Request) {
 	helpers.JSON(w, http.StatusOK, resp)
 }
 
+// ─── Update Mood ────────────────────────────────────────
+
+func UpdateMood(w http.ResponseWriter, r *http.Request) {
+	userID := helpers.GetUserID(r)
+
+	id, err := helpers.PathParamInt(r.URL.Path, "/moods/update/")
+	if err != nil {
+		helpers.Error(w, http.StatusBadRequest, "invalid mood id")
+		return
+	}
+
+	var body struct {
+		Name  string `json:"name"`
+		Emoji string `json:"emoji"`
+		Color string `json:"color"`
+	}
+	if err := helpers.Decode(r, &body); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Name == "" || body.Emoji == "" || body.Color == "" {
+		helpers.Error(w, http.StatusBadRequest, "name, emoji, and color are required")
+		return
+	}
+
+	ctx := context.Background()
+	tag, err := db.Pool.Exec(ctx,
+		`UPDATE moods SET name = $1, emoji = $2, color = $3 WHERE id = $4 AND user_id = $5`,
+		body.Name, body.Emoji, body.Color, id, userID,
+	)
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "failed to update mood")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		helpers.Error(w, http.StatusNotFound, "mood not found")
+		return
+	}
+
+	_ = cache.Del(ctx, "moods:"+userID)
+	_ = cache.Del(ctx, "entries:"+userID)
+
+	helpers.JSON(w, http.StatusOK, map[string]interface{}{"updated": true, "id": id, "name": body.Name, "emoji": body.Emoji, "color": body.Color})
+}
+
 // ─── Delete Mood ────────────────────────────────────────
 
 func DeleteMood(w http.ResponseWriter, r *http.Request) {

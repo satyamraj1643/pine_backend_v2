@@ -11,11 +11,12 @@ import (
 	"github.com/satyamraj1643/pine_backend_v2/internal/db"
 	"github.com/satyamraj1643/pine_backend_v2/internal/handler"
 	mw "github.com/satyamraj1643/pine_backend_v2/internal/middleware"
+	"github.com/satyamraj1643/pine_backend_v2/internal/tracing"
 )
 
 func main() {
-	// Load .env
-	if err := godotenv.Load(); err != nil {
+	// Load .env (overrides system env so .env is the source of truth)
+	if err := godotenv.Overload(); err != nil {
 		log.Println("No .env file found, using system env")
 	}
 
@@ -24,6 +25,9 @@ func main() {
 	defer db.Close()
 	cache.Connect()
 	defer cache.Close()
+
+	// Initialize LangSmith tracing
+	tracing.Init()
 
 	// Build the mux
 	mux := http.NewServeMux()
@@ -41,6 +45,7 @@ func main() {
 
 	// Auth
 	mux.Handle("GET /auth/validate", mw.Auth(http.HandlerFunc(handler.Validate)))
+	mux.Handle("PATCH /auth/update-profile", mw.Auth(http.HandlerFunc(handler.UpdateProfile)))
 	mux.Handle("POST /auth/logout/", mw.Auth(http.HandlerFunc(handler.Logout)))
 
 	// Entries
@@ -64,11 +69,23 @@ func main() {
 	mux.Handle("POST /collections/create-new", mw.Auth(http.HandlerFunc(handler.CreateCollection)))
 	mux.Handle("GET /collections/all", mw.Auth(http.HandlerFunc(handler.GetAllCollections)))
 	mux.Handle("DELETE /collections/delete/{id}", mw.Auth(http.HandlerFunc(handler.DeleteCollection)))
+	mux.Handle("PUT /collections/update/{id}", mw.Auth(http.HandlerFunc(handler.UpdateCollection)))
 
 	// Moods
 	mux.Handle("POST /moods/create-new", mw.Auth(http.HandlerFunc(handler.CreateMood)))
 	mux.Handle("GET /moods/all", mw.Auth(http.HandlerFunc(handler.GetAllMoods)))
 	mux.Handle("DELETE /moods/delete/{id}", mw.Auth(http.HandlerFunc(handler.DeleteMood)))
+	mux.Handle("PUT /moods/update/{id}", mw.Auth(http.HandlerFunc(handler.UpdateMood)))
+
+	// AI features
+	mux.Handle("POST /ai/reflect", mw.Auth(http.HandlerFunc(handler.AIReflect)))
+	mux.Handle("POST /ai/chat", mw.Auth(http.HandlerFunc(handler.AIChat)))
+	mux.Handle("POST /ai/suggest-mood", mw.Auth(http.HandlerFunc(handler.AISuggestMood)))
+	mux.Handle("POST /ai/ask", mw.Auth(http.HandlerFunc(handler.AIAsk)))
+	mux.Handle("GET /ai/weekly-recap", mw.Auth(http.HandlerFunc(handler.AIWeeklyRecap)))
+	mux.Handle("GET /ai/insights", mw.Auth(http.HandlerFunc(handler.AIInsights)))
+	mux.Handle("GET /ai/personality", mw.Auth(http.HandlerFunc(handler.AIPersonality)))
+	mux.Handle("GET /ai/health", mw.Auth(http.HandlerFunc(handler.AIHealth)))
 
 	// Wrap everything with CORS
 	finalHandler := mw.CORS(mux)

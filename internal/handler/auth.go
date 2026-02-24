@@ -267,6 +267,51 @@ func Validate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ─── PATCH /auth/update-profile ──────────────────────────
+
+func UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID := helpers.GetUserID(r)
+	if userID == "" {
+		helpers.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := helpers.Decode(r, &req); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		helpers.Error(w, http.StatusBadRequest, "name cannot be empty")
+		return
+	}
+	if len(req.Name) > 200 {
+		helpers.Error(w, http.StatusBadRequest, "name must be 200 characters or fewer")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	_, err := db.Pool.Exec(ctx,
+		`UPDATE users SET name = $1 WHERE id = $2`, req.Name, userID,
+	)
+	if err != nil {
+		log.Printf("update-profile: update error: %v", err)
+		helpers.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	helpers.JSON(w, http.StatusOK, map[string]interface{}{
+		"updated": true,
+		"name":    req.Name,
+	})
+}
+
 // ─── POST /auth/logout/ ─────────────────────────────────
 
 func Logout(w http.ResponseWriter, r *http.Request) {
