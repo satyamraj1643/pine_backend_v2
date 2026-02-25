@@ -102,3 +102,13 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_users_updated    BEFORE UPDATE ON users    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_chapters_updated BEFORE UPDATE ON chapters FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_entries_updated  BEFORE UPDATE ON entries  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ─── Export logs ────────────────────────────────────────────
+CREATE TABLE export_logs (
+    id          SERIAL PRIMARY KEY,
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    format      VARCHAR(20) NOT NULL,
+    size_bytes  BIGINT NOT NULL DEFAULT 0,
+    exported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_export_logs_user ON export_logs(user_id);

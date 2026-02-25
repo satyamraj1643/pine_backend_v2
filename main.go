@@ -95,6 +95,10 @@ func main() {
 	mux.Handle("GET /ai/personality", mw.Auth(http.HandlerFunc(handler.AIPersonality)))
 	mux.Handle("GET /ai/health", mw.Auth(http.HandlerFunc(handler.AIHealth)))
 
+	// Exports
+	mux.Handle("POST /exports/log", mw.Auth(http.HandlerFunc(handler.LogExport)))
+	mux.Handle("GET /exports/latest", mw.Auth(http.HandlerFunc(handler.GetLatestExport)))
+
 	// Wrap everything with CORS
 	finalHandler := mw.CORS(mux)
 
