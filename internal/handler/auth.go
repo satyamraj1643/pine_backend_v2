@@ -148,18 +148,32 @@ func VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Mark verified and clear OTP
-	_, err = db.Pool.Exec(ctx,
-		`UPDATE users SET is_verified = true, otp_code = NULL, otp_expires = NULL WHERE id = $1`,
+	var name string
+	err = db.Pool.QueryRow(ctx,
+		`UPDATE users SET is_verified = true, otp_code = NULL, otp_expires = NULL
+		 WHERE id = $1 RETURNING name`,
 		userID,
-	)
+	).Scan(&name)
 	if err != nil {
 		log.Printf("verify-otp: update error: %v", err)
 		helpers.Error(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
+	// Generate JWT so the client is immediately authenticated (same as /login)
+	token, err := helpers.GenerateJWT(userID, req.Email)
+	if err != nil {
+		log.Printf("verify-otp: jwt error: %v", err)
+		helpers.Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{
-		"isVerified": true,
+		"user_id":       userID,
+		"name":          name,
+		"email":         req.Email,
+		"isOtpVerified": true,
+		"token":         token,
 	})
 }
 
