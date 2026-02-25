@@ -10,6 +10,7 @@ CREATE TABLE users (
         255) NOT NULL UNIQUE,
     name          VARCHAR(200) NOT NULL DEFAULT '',
     password_hash VARCHAR(255) NOT NULL,
+    profile_picture TEXT,
     is_verified   BOOLEAN NOT NULL DEFAULT FALSE,
     otp_code      VARCHAR(6),
     otp_expires   TIMESTAMPTZ,

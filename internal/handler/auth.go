@@ -261,22 +261,29 @@ func Validate(w http.ResponseWriter, r *http.Request) {
 
 	var id, name, email string
 	var isVerified bool
+	var profilePicture *string
 
 	err := db.Pool.QueryRow(ctx,
-		`SELECT id, name, email, is_verified FROM users WHERE id = $1`, userID,
-	).Scan(&id, &name, &email, &isVerified)
+		`SELECT id, name, email, is_verified, profile_picture FROM users WHERE id = $1`, userID,
+	).Scan(&id, &name, &email, &isVerified, &profilePicture)
 	if err != nil {
 		log.Printf("validate: query error: %v", err)
 		helpers.Error(w, http.StatusNotFound, "user not found")
 		return
 	}
 
+	pp := ""
+	if profilePicture != nil {
+		pp = *profilePicture
+	}
+
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{
 		"user": map[string]interface{}{
-			"id":         id,
-			"name":       name,
-			"email":      email,
-			"isVerified": isVerified,
+			"id":              id,
+			"name":            name,
+			"email":           email,
+			"isVerified":      isVerified,
+			"profile_picture": pp,
 		},
 	})
 }
@@ -291,7 +298,8 @@ func UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
+		Name           string  `json:"name"`
+		ProfilePicture *string `json:"profile_picture"`
 	}
 	if err := helpers.Decode(r, &req); err != nil {
 		helpers.Error(w, http.StatusBadRequest, "invalid request body")
@@ -310,6 +318,28 @@ func UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+
+	if req.ProfilePicture != nil {
+		// Limit profile picture to ~500KB base64
+		if len(*req.ProfilePicture) > 700000 {
+			helpers.Error(w, http.StatusBadRequest, "profile picture too large (max 500KB)")
+			return
+		}
+		_, err := db.Pool.Exec(ctx,
+			`UPDATE users SET name = $1, profile_picture = $2 WHERE id = $3`, req.Name, *req.ProfilePicture, userID,
+		)
+		if err != nil {
+			log.Printf("update-profile: update error: %v", err)
+			helpers.Error(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		helpers.JSON(w, http.StatusOK, map[string]interface{}{
+			"updated":         true,
+			"name":            req.Name,
+			"profile_picture": *req.ProfilePicture,
+		})
+		return
+	}
 
 	_, err := db.Pool.Exec(ctx,
 		`UPDATE users SET name = $1 WHERE id = $2`, req.Name, userID,
