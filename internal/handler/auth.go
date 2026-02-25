@@ -332,6 +332,32 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{})
 }
 
+// ─── DELETE /auth/delete-account ─────────────────────────
+
+func DeleteAccount(w http.ResponseWriter, r *http.Request) {
+	userID := helpers.GetUserID(r)
+	if userID == "" {
+		helpers.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// CASCADE on users table handles entries, chapters, collections, moods
+	_, err := db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		log.Printf("delete-account: error: %v", err)
+		helpers.Error(w, http.StatusInternalServerError, "failed to delete account")
+		return
+	}
+
+	log.Printf("delete-account: user %s deleted", userID)
+	helpers.JSON(w, http.StatusOK, map[string]interface{}{
+		"deleted": true,
+	})
+}
+
 // ─── POST /auth/users/reset_password/ ───────────────────
 
 func ResetPassword(w http.ResponseWriter, r *http.Request) {

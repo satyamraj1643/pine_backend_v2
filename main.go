@@ -47,6 +47,7 @@ func main() {
 	mux.Handle("GET /auth/validate", mw.Auth(http.HandlerFunc(handler.Validate)))
 	mux.Handle("PATCH /auth/update-profile", mw.Auth(http.HandlerFunc(handler.UpdateProfile)))
 	mux.Handle("POST /auth/logout/", mw.Auth(http.HandlerFunc(handler.Logout)))
+	mux.Handle("DELETE /auth/delete-account", mw.Auth(http.HandlerFunc(handler.DeleteAccount)))
 
 	// Entries
 	mux.Handle("POST /entries/create-new", mw.Auth(http.HandlerFunc(handler.CreateEntry)))
