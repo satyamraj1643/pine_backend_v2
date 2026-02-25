@@ -3,23 +3,20 @@ package helpers
 import (
 	"fmt"
 	"log"
-	"net/smtp"
 	"os"
+
+	"github.com/resend/resend-go/v3"
 )
 
-// SendOTPEmail sends an OTP code to the user via Gmail SMTP.
-// Requires SMTP_EMAIL and SMTP_APP_PASSWORD env vars.
+// SendOTPEmail sends an OTP code to the user via Resend.
+// Requires RESEND_API_KEY env var.
 func SendOTPEmail(toEmail, otp, purpose string) error {
-	from := os.Getenv("SMTP_EMAIL")
-	password := os.Getenv("SMTP_APP_PASSWORD")
+	apiKey := os.Getenv("RESEND_API_KEY")
 
-	if from == "" || password == "" {
-		log.Printf("email: SMTP not configured, OTP for %s is %s", toEmail, otp)
+	if apiKey == "" {
+		log.Printf("email: Resend not configured, OTP for %s is %s", toEmail, otp)
 		return nil // Graceful fallback — don't break the flow
 	}
-
-	smtpHost := "smtp.gmail.com"
-	smtpPort := "587"
 
 	// Subject line based on purpose
 	subject := "Your Pine verification code"
@@ -66,18 +63,21 @@ func SendOTPEmail(toEmail, otp, purpose string) error {
 </body>
 </html>`, heading, subtext, otp)
 
-	msg := fmt.Sprintf(
-		"From: Pine <%s>\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
-		from, toEmail, subject, body,
-	)
+	client := resend.NewClient(apiKey)
 
-	auth := smtp.PlainAuth("", from, password, smtpHost)
-	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, from, []string{toEmail}, []byte(msg))
+	params := &resend.SendEmailRequest{
+		From:    "Pine <onboarding@resend.dev>",
+		To:      []string{toEmail},
+		Subject: subject,
+		Html:    body,
+	}
+
+	sent, err := client.Emails.Send(params)
 	if err != nil {
 		log.Printf("email: failed to send to %s: %v", toEmail, err)
 		return fmt.Errorf("failed to send email: %w", err)
 	}
 
-	log.Printf("email: OTP sent to %s", toEmail)
+	log.Printf("email: OTP sent to %s (id: %s)", toEmail, sent.Id)
 	return nil
 }
