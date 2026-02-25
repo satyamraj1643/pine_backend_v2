@@ -32,6 +32,13 @@ func main() {
 	// Build the mux
 	mux := http.NewServeMux()
 
+	// ─── Health check ──────────────────────────────────────
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	// ─── Public auth routes (no token needed) ───────────────
 	mux.HandleFunc("POST /signup", handler.Signup)
 	mux.HandleFunc("POST /login", handler.Login)
