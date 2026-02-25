@@ -19,7 +19,8 @@ func Connect() {
 	if err != nil {
 		log.Fatalf("Unable to parse DATABASE_URL: %v", err)
 	}
-	config.MaxConns = 20
+	// Supabase free tier allows ~60 direct connections; keep pool conservative
+	config.MaxConns = 10
 	config.MinConns = 2
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
@@ -32,7 +33,7 @@ func Connect() {
 	}
 
 	Pool = pool
-	log.Println("Database connected (pool)")
+	log.Println("Database connected to Supabase (pool)")
 }
 
 func Close() {
