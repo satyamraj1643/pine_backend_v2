@@ -10,6 +10,7 @@ import (
 	"github.com/satyamraj1643/pine_backend_v2/internal/cache"
 	"github.com/satyamraj1643/pine_backend_v2/internal/db"
 	"github.com/satyamraj1643/pine_backend_v2/internal/handler"
+	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
 	mw "github.com/satyamraj1643/pine_backend_v2/internal/middleware"
 	"github.com/satyamraj1643/pine_backend_v2/internal/tracing"
 )
@@ -25,6 +26,8 @@ func main() {
 	defer db.Close()
 	cache.Connect()
 	defer cache.Close()
+
+	helpers.LogSMTPConfig()
 
 	// Initialize LangSmith tracing
 	tracing.Init()
