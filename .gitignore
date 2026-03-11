@@ -1,2 +1,4 @@
 pine-server
 .env
+.gocache/
+.gomodcache/
