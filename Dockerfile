@@ -27,7 +27,7 @@ WORKDIR /root/
 # Copy the binary from the builder stage
 COPY --from=builder /app/main .
 
-# Expose the port (Render uses PORT env var, defaults to 8080 usually)
+# Expose the port (default 8080, configurable via PORT env var)
 EXPOSE 8080
 
 # Command to run the application

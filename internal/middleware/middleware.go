@@ -3,19 +3,23 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
 )
 
-// allowedOrigins returns the request origin if it's in our whitelist.
+// allowedOrigin returns the request origin if it's in our whitelist.
+// Origins are read from the ALLOWED_ORIGINS env var (comma-separated).
+// Falls back to localhost:5173 if not set.
 func allowedOrigin(origin string) string {
-	allowed := []string{
-		"http://localhost:5173",
-		"https://pine-ut4n.onrender.com",
+	raw := os.Getenv("ALLOWED_ORIGINS")
+	if raw == "" {
+		raw = "http://localhost:5173"
 	}
-	for _, o := range allowed {
-		if origin == o {
+	for _, o := range strings.Split(raw, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" && origin == o {
 			return o
 		}
 	}
