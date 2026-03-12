@@ -1,4 +1,4 @@
-﻿package helpers
+package helpers
 
 import (
 	"bytes"
@@ -11,26 +11,13 @@ import (
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/resend/resend-go/v3"
 )
 
-// SendOTPEmail sends an OTP code to the user.
+// SendOTPEmail sends an OTP code to the user via SMTP.
 //
-// Hosted platforms often block outbound SMTP (ports 465/587). If RESEND_API_KEY
-// is set, we prefer sending via Resend over HTTPS. Otherwise we try SMTP.
-//
-// SMTP requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.
+// Requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.
 // Also supports legacy names SMTP_EMAIL and SMTP_APP_PASSWORD.
 func SendOTPEmail(toEmail, otp, purpose string) error {
-	if apiKey := os.Getenv("RESEND_API_KEY"); apiKey != "" {
-		from := os.Getenv("RESEND_FROM")
-		if from == "" {
-			from = "Pine <onboarding@resend.dev>"
-		}
-		return sendOTPResend(apiKey, from, toEmail, otp, purpose)
-	}
-
 	host := os.Getenv("SMTP_HOST")
 	portStr := os.Getenv("SMTP_PORT")
 	user := os.Getenv("SMTP_USER")
@@ -75,17 +62,8 @@ func SendOTPEmail(toEmail, otp, purpose string) error {
 	return nil
 }
 
-// LogSMTPConfig logs whether an email provider is configured at startup without exposing secrets.
+// LogSMTPConfig logs whether SMTP is configured at startup without exposing secrets.
 func LogSMTPConfig() {
-	if apiKey := os.Getenv("RESEND_API_KEY"); apiKey != "" {
-		from := os.Getenv("RESEND_FROM")
-		if from == "" {
-			from = "Pine <onboarding@resend.dev>"
-		}
-		log.Printf("email: provider=resend configured (from=%s)", from)
-		return
-	}
-
 	host := os.Getenv("SMTP_HOST")
 	portStr := os.Getenv("SMTP_PORT")
 	user := os.Getenv("SMTP_USER")
@@ -186,26 +164,6 @@ func buildSMTPMessage(fromHeader, toEmail, subject, htmlBody string) []byte {
 	msg.WriteString("\r\n")
 	msg.WriteString(htmlBody)
 	return msg.Bytes()
-}
-
-func sendOTPResend(apiKey, from, toEmail, otp, purpose string) error {
-	subject, htmlBody := buildOTPEmail(purpose, otp)
-
-	client := resend.NewClient(apiKey)
-	params := &resend.SendEmailRequest{
-		From:    from,
-		To:      []string{toEmail},
-		Subject: subject,
-		Html:    htmlBody,
-	}
-
-	sent, err := client.Emails.Send(params)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("email: OTP sent to %s via Resend (id: %s)", toEmail, sent.Id)
-	return nil
 }
 
 func sendMailSMTP(host string, port int, user, pass, fromEnvelope, toEmail string, msg []byte) error {
