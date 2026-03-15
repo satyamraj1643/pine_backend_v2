@@ -116,7 +116,7 @@ func CreateEntry(w http.ResponseWriter, r *http.Request) {
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
-	helpers.JSON(w, http.StatusCreated, map[string]bool{"created": true})
+	helpers.JSON(w, http.StatusCreated, map[string]interface{}{"created": true, "id": entryID})
 }
 
 // ─── 2. GET /entries/all ─────────────────────────────────

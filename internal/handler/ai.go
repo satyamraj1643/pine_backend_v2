@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/satyamraj1643/pine_backend_v2/internal/db"
 	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
+	"github.com/satyamraj1643/pine_backend_v2/internal/prompts"
 	"github.com/satyamraj1643/pine_backend_v2/internal/tracing"
 )
 
@@ -96,7 +97,7 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 func invokeGemini(ctx context.Context, name string, system string, userPrompt string, maxTokens int, temperature float64) (string, error) {
 	model := os.Getenv("BEDROCK_MODEL")
 	if model == "" {
-		model = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+		model = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 	}
 
 	span := tracing.StartLLMSpan(name, model, system, userPrompt, "")
@@ -160,7 +161,7 @@ func invokeGemini(ctx context.Context, name string, system string, userPrompt st
 func invokeGeminiChat(ctx context.Context, name string, system string, messages []geminiContent, maxTokens int, temperature float64) (string, error) {
 	model := os.Getenv("BEDROCK_MODEL")
 	if model == "" {
-		model = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+		model = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 	}
 
 	// Build tracing info — send full conversation history
@@ -364,9 +365,12 @@ func AIReflect(w http.ResponseWriter, r *http.Request) {
 		plainContent = plainContent[:4000]
 	}
 
-	system := `You are a warm, empathetic journal companion for a young person. You just read their journal entry. Give a brief, thoughtful reflection (2-4 sentences max). Be genuine, not preachy. Acknowledge their feelings without being a therapist. Talk like a supportive best friend who really gets it. Never use bullet points or lists — just natural, flowing text. Don't start with "It sounds like" or "I notice that".`
+	system := prompts.GetSystem("reflect")
 
-	prompt := fmt.Sprintf("Here is the journal entry:\n\nTitle: %s\n\n%s", req.Title, plainContent)
+	prompt := prompts.FormatHuman("reflect", map[string]string{
+		"title":         req.Title,
+		"journal_entry": plainContent,
+	})
 
 	result, err := invokeGemini(r.Context(), "reflect", system, prompt, 300, 0.8)
 	if err != nil {
@@ -414,7 +418,6 @@ func AISuggestMood(w http.ResponseWriter, r *http.Request) {
 	var prompt string
 
 	if len(moods) > 0 {
-		// Has existing moods — try to match one, or suggest a new one if nothing fits
 		var moodList strings.Builder
 		for i, m := range moods {
 			if i > 0 {
@@ -423,35 +426,16 @@ func AISuggestMood(w http.ResponseWriter, r *http.Request) {
 			moodList.WriteString(fmt.Sprintf("%s (id:%d, emoji:%s)", m.Name, m.ID, m.Emoji))
 		}
 
-		system = `You analyze a journal entry to detect the writer's mood. You MUST respond with ONLY valid JSON, no other text.
-
-IMPORTANT: You MUST pick from the user's existing moods. Be generous — if an existing mood is even a rough fit, use it. Interpret mood names broadly. For example "happy" covers joy, excitement, contentment; "sad" covers melancholy, disappointment, longing; "calm" covers peaceful, relaxed, content.
-
-Return an existing mood:
-{"mood_id": <integer>, "mood_name": "<string>", "mood_emoji": "<their existing emoji>", "is_new": false}
-
-ONLY if absolutely NONE of the existing moods are even a loose fit for the entry's tone, return a new mood:
-{"mood_id": 0, "mood_name": "<new mood name>", "mood_emoji": "<bare shortcode>", "is_new": true}
-
-Rules for new moods (last resort only):
-- Name should be a single lowercase word like "nostalgic", "grateful", "restless", "hopeful"
-- Emoji shortcode must be bare (no colons). Examples: smile, pensive, relieved, heart, grinning. NOT :smile: or :pensive:
-- You should almost never need to suggest a new mood if the user has 3+ existing moods`
-
-		prompt = fmt.Sprintf("Existing moods: %s\n\nJournal entry:\n%s\n\nRespond with JSON only.", moodList.String(), plainContent)
+		system = prompts.GetSystem("suggest-mood-existing")
+		prompt = prompts.FormatHuman("suggest-mood-existing", map[string]string{
+			"existing_moods": moodList.String(),
+			"journal_entry":  plainContent,
+		})
 	} else {
-		// No existing moods — suggest a fresh one
-		system = `You analyze a journal entry to detect the writer's mood. You MUST respond with ONLY valid JSON, no other text.
-
-Return:
-{"mood_id": 0, "mood_name": "<mood name>", "mood_emoji": "<bare shortcode>", "is_new": true}
-
-Rules:
-- Name should be a single lowercase word like "happy", "anxious", "calm", "grateful", "restless"
-- Emoji shortcode must be bare (no colons). Examples: smile, pensive, relieved, heart, grinning. NOT :smile: or :pensive:
-- Pick the single best mood that captures the overall tone of the entry`
-
-		prompt = fmt.Sprintf("Journal entry:\n%s\n\nRespond with JSON only.", plainContent)
+		system = prompts.GetSystem("suggest-mood-new")
+		prompt = prompts.FormatHuman("suggest-mood-new", map[string]string{
+			"journal_entry": plainContent,
+		})
 	}
 
 	result, err := invokeGemini(r.Context(), "suggest-mood", system, prompt, 100, 0.3)
@@ -537,9 +521,12 @@ func AIAsk(w http.ResponseWriter, r *http.Request) {
 		))
 	}
 
-	system := `You are a helpful journal assistant. The user is asking a question about their past journal entries. Answer based ONLY on the entries provided — don't make things up. Be specific: mention dates and entry titles when relevant. If you can't find the answer in the entries, say so honestly. Keep it conversational, warm, and brief (3-5 sentences). Never reveal raw data formats or IDs.`
+	system := prompts.GetSystem("ask-journal")
 
-	prompt := fmt.Sprintf("Here are my journal entries:\n\n%s\n\nMy question: %s", entriesContext.String(), req.Question)
+	prompt := prompts.FormatHuman("ask-journal", map[string]string{
+		"journal_entries": entriesContext.String(),
+		"question":        req.Question,
+	})
 
 	result, err := invokeGemini(r.Context(), "ask-journal", system, prompt, 500, 0.5)
 	if err != nil {
@@ -615,9 +602,12 @@ func AIWeeklyRecap(w http.ResponseWriter, r *http.Request) {
 		))
 	}
 
-	system := `You are a warm journal companion. Write a brief weekly recap (3-4 sentences) summarizing the user's journal entries from this week. Mention key themes, mood shifts, and highlights. Address the user directly ("You..." / "Your week..."). Keep it casual, genuine, and supportive. Don't use bullet points or lists.`
+	system := prompts.GetSystem("weekly-recap")
 
-	prompt := fmt.Sprintf("Here are my entries from the past week (%d total):\n\n%s", len(entries), ctx.String())
+	prompt := prompts.FormatHuman("weekly-recap", map[string]string{
+		"entry_count":    fmt.Sprintf("%d", len(entries)),
+		"weekly_entries": ctx.String(),
+	})
 
 	result, err := invokeGemini(r.Context(), "weekly-recap", system, prompt, 400, 0.7)
 	if err != nil {
@@ -635,11 +625,13 @@ func AIWeeklyRecap(w http.ResponseWriter, r *http.Request) {
 // ─── Health check for AI ─────────────────────────────────
 
 func AIHealth(w http.ResponseWriter, r *http.Request) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
+	// Check if AWS Bedrock credentials are configured
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if accessKey == "" || secretKey == "" {
 		helpers.JSON(w, http.StatusOK, map[string]interface{}{
 			"available": false,
-			"reason":    "GEMINI_API_KEY not set",
+			"reason":    "AWS credentials not configured",
 		})
 		return
 	}
@@ -715,23 +707,12 @@ func AIInsights(w http.ResponseWriter, r *http.Request) {
 		))
 	}
 
-	system := `You analyze journal entries and return ONLY valid JSON. No other text, no markdown fences, just the raw JSON object.
+	system := prompts.GetSystem("insights")
 
-The JSON must match this exact structure:
-{
-  "themes": [{"name": "theme name", "count": number}],
-  "sentiment": {"positive": number, "neutral": number, "negative": number},
-  "patterns": ["pattern observation 1", "pattern observation 2", "pattern observation 3"],
-  "summary": "one sentence overall summary"
-}
-
-Rules:
-- themes: Extract 5-8 recurring topics. "count" = how many entries mention that topic. Use lowercase single-word or two-word labels (e.g. "work", "relationships", "self care", "family", "fitness").
-- sentiment: Percentage breakdown of entries by tone. Must sum to 100.
-- patterns: 2-4 short behavioral observations. Be specific and useful, not generic. Example: "You write longer entries when stressed" or "Weekends tend to be more positive". Write in second person.
-- summary: One casual sentence summarizing the journal. Address the user as "you".`
-
-	prompt := fmt.Sprintf("Analyze these %d journal entries:\n\n%s", len(entries), ctx.String())
+	prompt := prompts.FormatHuman("insights", map[string]string{
+		"entry_count":     fmt.Sprintf("%d", len(entries)),
+		"journal_entries": ctx.String(),
+	})
 
 	result, err := invokeGemini(r.Context(), "insights", system, prompt, 600, 0.3)
 	if err != nil {
@@ -794,20 +775,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		plainContent = plainContent[:4000]
 	}
 
-	system := fmt.Sprintf(`You are the user's journal buddy — a warm, thoughtful friend they can talk to about their journal entries. You've just read this entry:
-
-Title: %s
-
-%s
-
-Rules:
-- Talk like a close friend, not a therapist or an AI assistant
-- Keep replies short (2-4 sentences usually). Be concise but genuine
-- You can ask follow-up questions to understand how they feel
-- Never be preachy or give unsolicited advice unless they ask
-- Reference specific things from their entry to show you actually read it
-- Match their energy — if they're casual, be casual. If they're serious, be thoughtful
-- Never say "I'm an AI" or "As an AI". You're their buddy`, req.Title, plainContent)
+	// The chat system prompt has {title} and {journal_entry} variables baked in
+	baseSystem := prompts.GetSystem("chat")
+	system := strings.ReplaceAll(baseSystem, "{title}", req.Title)
+	system = strings.ReplaceAll(system, "{journal_entry}", plainContent)
 
 	// Build Gemini conversation history
 	var geminiMessages []geminiContent
@@ -882,28 +853,12 @@ func AIPersonality(w http.ResponseWriter, r *http.Request) {
 		))
 	}
 
-	system := `You are a personality analyst for a journaling app. You read someone's journal entries and figure out their writer personality. You speak in a casual, warm, gen-z friendly tone — like a smart friend who gets them.
+	system := prompts.GetSystem("personality")
 
-Return ONLY valid JSON. No markdown fences, no extra text. Just the raw JSON object matching this exact structure:
-
-{
-  "archetype": "string",
-  "summary": "string",
-  "traits": ["string"],
-  "vibes": ["string"],
-  "energy": "string",
-  "patterns": ["string"]
-}
-
-Rules:
-- archetype: A creative 2-4 word name for their writer personality. Make it feel like a character class or zodiac archetype. Examples: "The Midnight Philosopher", "Chaos Poet", "The Gentle Observer", "Sunset Overthinker", "The Quiet Storm". Be creative and specific to THEM, not generic.
-- summary: A casual 2-3 sentence paragraph describing who they are as a writer. Use "you" language. Should feel like a friend describing them, not a psych evaluation. Reference specific patterns you noticed.
-- traits: 4-6 single-word or two-word personality traits based on their writing style and content. Lowercase. Examples: "introspective", "emotionally honest", "detail-oriented", "restless", "grounded".
-- vibes: 3-5 casual one-liner observations that start with "you" or "the type who". Should feel relatable and slightly funny. Examples: "you journal at 2am and call it self-care", "the type who re-reads old entries like they're love letters to yourself".
-- energy: One word describing their overall energy. Pick from: calm, dreamy, intense, chaotic, warm, bold, quiet, restless, grounded, electric. Choose the single most fitting one.
-- patterns: 2-4 specific behavioral patterns you noticed in their writing. Be concrete, not generic. Examples: "You write more when you're anxious — your entries get longer and more detailed", "Weekends are your most reflective days". Use second person "you".`
-
-	prompt := fmt.Sprintf("Here are %d journal entries from this person. Figure out their writer personality:\n\n%s", len(entries), ctx.String())
+	prompt := prompts.FormatHuman("personality", map[string]string{
+		"entry_count":     fmt.Sprintf("%d", len(entries)),
+		"journal_entries": ctx.String(),
+	})
 
 	result, err := invokeGemini(r.Context(), "personality", system, prompt, 800, 0.85)
 	if err != nil {
