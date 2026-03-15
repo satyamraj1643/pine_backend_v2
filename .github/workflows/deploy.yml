@@ -34,10 +34,15 @@ jobs:
             sleep 5
 
             echo "▸ Health check..."
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "✓ Backend deployed successfully (HTTP $HTTP_CODE)"
+            # Backend is only reachable inside Docker network (no exposed ports).
+            # Check container is running and not restart-looping.
+            RUNNING=$(sudo docker inspect -f '{{.State.Running}}' pine-backend 2>/dev/null || echo "false")
+            RESTARTS=$(sudo docker inspect -f '{{.RestartCount}}' pine-backend 2>/dev/null || echo "99")
+            if [ "$RUNNING" = "true" ] && [ "$RESTARTS" -lt 3 ]; then
+              echo "✓ Backend deployed successfully (container running, restarts: $RESTARTS)"
             else
-              echo "⚠ Backend returned HTTP $HTTP_CODE — check logs with: sudo docker compose logs backend"
+              echo "⚠ Backend not healthy (running=$RUNNING, restarts=$RESTARTS)"
+              echo "--- Recent logs ---"
+              sudo docker compose logs --tail=20 backend
               exit 1
             fi
