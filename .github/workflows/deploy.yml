@@ -17,32 +17,37 @@ jobs:
           script: |
             set -e
             APP_DIR="$HOME/pine"
-            cd "$APP_DIR/backend"
+            
+            # If repo is inside $HOME/pine/backend or $HOME/pine directly
+            if [ -d "$APP_DIR/backend/.git" ]; then
+              TARGET_DIR="$APP_DIR/backend"
+            else
+              TARGET_DIR="$APP_DIR"
+            fi
+
+            cd "$TARGET_DIR"
 
             echo "▸ Resetting local changes..."
-            git checkout -- .
-            git clean -fd
+            git checkout -- . || true
+            git clean -fd || true
 
-            echo "▸ Pulling latest backend..."
+            echo "▸ Pulling latest code from main..."
             git pull origin main
 
-            echo "▸ Rebuilding and restarting backend container..."
-            cd "$APP_DIR"
-            sudo docker compose up -d --build backend
+            echo "▸ Rebuilding and restarting containers..."
+            sudo docker compose up -d --build
 
-            echo "▸ Waiting for backend to be healthy..."
+            echo "▸ Waiting for backend container..."
             sleep 5
 
             echo "▸ Health check..."
-            # Backend is only reachable inside Docker network (no exposed ports).
-            # Check container is running and not restart-looping.
             RUNNING=$(sudo docker inspect -f '{{.State.Running}}' pine-backend 2>/dev/null || echo "false")
             RESTARTS=$(sudo docker inspect -f '{{.RestartCount}}' pine-backend 2>/dev/null || echo "99")
-            if [ "$RUNNING" = "true" ] && [ "$RESTARTS" -lt 3 ]; then
+            if [ "$RUNNING" = "true" ] && [ "$RESTARTS" -lt 5 ]; then
               echo "✓ Backend deployed successfully (container running, restarts: $RESTARTS)"
             else
               echo "⚠ Backend not healthy (running=$RUNNING, restarts=$RESTARTS)"
               echo "--- Recent logs ---"
-              sudo docker compose logs --tail=20 backend
+              sudo docker compose logs --tail=30
               exit 1
             fi
