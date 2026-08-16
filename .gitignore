@@ -1,5 +1,16 @@
-pine-server
+# Environment variables
 .env
-.gocache/
-.gomodcache/
+.env.*
 *.pem
+*.key
+
+# Binaries
+main
+pine-server
+bin/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

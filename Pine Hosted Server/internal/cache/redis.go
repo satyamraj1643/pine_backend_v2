@@ -17,14 +17,23 @@ func Connect() {
 	if addr == "" {
 		addr = "localhost:6379"
 	}
-	// Strip redis:// or rediss:// prefix if present
-	addr = strings.TrimPrefix(addr, "redis://")
-	addr = strings.TrimPrefix(addr, "rediss://")
-	RDB = redis.NewClient(&redis.Options{
-		Addr: addr,
-		DB:   0,
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+
+	var opts *redis.Options
+	if strings.HasPrefix(addr, "redis://") || strings.HasPrefix(addr, "rediss://") {
+		parsedOpts, err := redis.ParseURL(addr)
+		if err != nil {
+			log.Fatalf("Unable to parse REDIS_URL: %v", err)
+		}
+		opts = parsedOpts
+	} else {
+		opts = &redis.Options{
+			Addr: addr,
+			DB:   0,
+		}
+	}
+
+	RDB = redis.NewClient(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := RDB.Ping(ctx).Err(); err != nil {
 		log.Fatalf("Unable to connect to Redis: %v", err)
