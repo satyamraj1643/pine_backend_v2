@@ -1,16 +1,20 @@
-# Environment variables
-.env
-.env.*
-*.pem
-*.key
-
 # Binaries
 main
 pine-server
 bin/
 
-# OS and IDE files
+# Environment variables
+.env
+.env.local
+*.env
+
+# Keys & Certificates
+*.pem
+*.key
+*.crt
+
+# Caches and OS
+.gocache/
+.gomodcache/
 .DS_Store
 Thumbs.db
-.idea/
-.vscode/
