@@ -11,16 +11,20 @@ import (
 
 // allowedOrigin returns the request origin if it's in our whitelist.
 // Origins are read from the ALLOWED_ORIGINS env var (comma-separated).
-// Falls back to localhost:5173 if not set.
+// Supports '*' wildcard (reflects origin), case-insensitive matching, and trims trailing slashes.
 func allowedOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
 	raw := os.Getenv("ALLOWED_ORIGINS")
 	if raw == "" {
-		raw = "http://localhost:5173"
+		raw = "http://localhost:5173,http://localhost:3000,https://pine.brink.co.in"
 	}
+	cleanOrigin := strings.TrimRight(origin, "/")
 	for _, o := range strings.Split(raw, ",") {
-		o = strings.TrimSpace(o)
-		if o != "" && origin == o {
-			return o
+		o = strings.TrimRight(strings.TrimSpace(o), "/")
+		if o == "*" || (o != "" && strings.EqualFold(cleanOrigin, o)) {
+			return origin
 		}
 	}
 	return ""
@@ -33,10 +37,11 @@ func CORS(next http.Handler) http.Handler {
 		allowed := allowedOrigin(origin)
 		if allowed != "" {
 			w.Header().Set("Access-Control-Allow-Origin", allowed)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept, Origin")
+		w.Header().Set("Access-Control-Max-Age", "86400")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
