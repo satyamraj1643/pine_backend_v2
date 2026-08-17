@@ -93,11 +93,7 @@ def chat_handler(title: str, content: str, messages: List[Dict[str, str]]) -> Di
         "content": content,
         "messages": history
     })
-    import re
-    reply_text = result.content.strip()
-    reply_text = re.sub(r"<think>.*?</think>\s*", "", reply_text, flags=re.DOTALL)
-    
-    return {"reply": reply_text.strip()}
+    return {"reply": result.content.strip()}
 
 
 def personality_handler(entry_count: int, journal_entries: str) -> Dict[str, Any]:

@@ -23,9 +23,6 @@ var aiHTTPClient = &http.Client{Timeout: 30 * time.Second}
 // callAIService sends a POST request to the Python AIService and returns the raw response body.
 func callAIService(path string, payload interface{}) ([]byte, int, error) {
 	baseURL := os.Getenv("AI_SERVICE_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:8000"
-	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	body, err := json.Marshal(payload)
@@ -488,10 +485,12 @@ func AIInsights(w http.ResponseWriter, r *http.Request) {
 
 func AIChat(w http.ResponseWriter, r *http.Request) {
 	userID := helpers.GetUserID(r)
+
 	if userID == "" {
 		helpers.Error(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+
 
 	var req struct {
 		Title   string `json:"title"`
@@ -501,6 +500,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			Text string `json:"text"`
 		} `json:"messages"`
 	}
+
 	if err := helpers.Decode(r, &req); err != nil {
 		helpers.Error(w, http.StatusBadRequest, "Invalid request")
 		return
