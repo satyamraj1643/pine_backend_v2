@@ -12,8 +12,7 @@ import (
 	"github.com/satyamraj1643/pine_backend_v2/internal/handler"
 	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
 	mw "github.com/satyamraj1643/pine_backend_v2/internal/middleware"
-	"github.com/satyamraj1643/pine_backend_v2/internal/prompts"
-	"github.com/satyamraj1643/pine_backend_v2/internal/tracing"
+
 )
 
 func main() {
@@ -30,11 +29,7 @@ func main() {
 
 	helpers.LogSMTPConfig()
 
-	// Initialize LangSmith tracing
-	tracing.Init()
 
-	// Initialize LangSmith prompt hub
-	prompts.Init()
 
 	// Build the mux
 	mux := http.NewServeMux()

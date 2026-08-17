@@ -1,59 +1,69 @@
-# Pine Backend Server
+# Pine Backend
 
-A high-performance Go backend for Pine with PostgreSQL (Supabase), Redis cache, Amazon Bedrock (Claude), and LangSmith tracing.
+Microservices backend for the Pine application.
 
----
+## Architecture
 
-## 🚀 Deploying to Render
+- **CoreService (Go)**: API Gateway, Auth, Postgres/Redis access. Proxies AI requests to AIService.
+- **AIService (Python/FastAPI)**: LLM integration using LangChain and Groq API.
 
-You can deploy this backend as a **Web Service** on [Render](https://render.com) using either **Native Go** or **Docker**.
+## Requirements
 
-### Option 1: Native Go Web Service (Recommended)
-1. In the Render Dashboard, click **New +** -> **Web Service**.
-2. Connect your GitHub repository.
-3. Configure the service:
-   - **Name**: `pine-backend`
-   - **Runtime**: `Go`
-   - **Build Command**: `go build -o bin/server .`
-   - **Start Command**: `./bin/server`
-4. Add the Environment Variables (see `.env.example`).
+- Go 1.21+
+- Python 3.11+
+- PostgreSQL (Supabase)
+- Redis
 
-### Option 2: Docker Web Service
-1. In the Render Dashboard, click **New +** -> **Web Service**.
-2. Connect your GitHub repository.
-3. Select **Docker** as runtime (Render will automatically pick up `Dockerfile`).
-4. Add the Environment Variables.
+## Setup & Run
 
----
+### 1. AIService (Python)
 
-## 🔑 Required Environment Variables
-
-Set the following in **Environment Variables** on Render:
-
-| Variable | Description | Example |
-|---|---|---|
-| `PORT` | Web server port (Render sets this automatically) | `8080` |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:pass@host:6543/postgres` |
-| `REDIS_URL` | Redis URL | `rediss://default:pass@host:port` or `redis://red-xxx:6379` |
-| `JWT_SECRET` | Secret string for signing auth tokens | `your_secret_key` |
-| `SMTP_EMAIL` | Sender email address for OTP | `pine@example.com` |
-| `SMTP_APP_PASSWORD` | App password for SMTP provider | `xxxx-xxxx-xxxx-xxxx` |
-| `SMTP_HOST` | SMTP server host | `smtp.gmail.com` |
-| `SMTP_PORT` | SMTP port | `587` |
-| `AWS_ACCESS_KEY_ID` | AWS key for Bedrock | `AKIA...` |
-| `AWS_SECRET_ACCESS_KEY`| AWS secret for Bedrock | `secret` |
-| `AWS_REGION` | AWS Region for Bedrock | `us-east-1` |
-| `LANGSMITH_API_KEY` | (Optional) LangSmith tracing API key | `lsv2_pt_...` |
-| `LANGSMITH_PROJECT` | (Optional) LangSmith project name | `pine-production` |
-
----
-
-## 💻 Local Development
+Handles all AI tasks.
 
 ```bash
-# Copy and configure environment variables
-cp .env.example .env
+cd AIService
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env # Configure your API keys
+uvicorn main:app --port 8000 --reload
+```
 
-# Run the server
+**AIService Environment Variables:**
+- `AI_API_KEY`: Groq API key
+- `AI_MODEL`: e.g., `llama-3.1-8b-instant`
+- `LANGCHAIN_TRACING_V2`: `true`
+- `LANGCHAIN_API_KEY`: LangSmith API key
+- `LANGCHAIN_PROJECT`: LangSmith project name
+
+### 2. CoreService (Go)
+
+Handles auth and data storage, routes to AIService.
+
+```bash
+cd CoreService
+cp .env.example .env # Set AI_SERVICE_URL=http://localhost:8000
+go mod tidy
 go run main.go
 ```
+
+**CoreService Environment Variables:**
+- `DATABASE_URL`: Postgres connection string
+- `REDIS_URL`: Redis connection string
+- `JWT_SECRET`: Auth signing key
+- `SMTP_*`: Credentials for email delivery
+- `AI_SERVICE_URL`: URL of the Python AIService (e.g. `http://localhost:8000`)
+
+## Deployment (Render)
+
+Deploy as two separate **Web Services**:
+
+1. **AIService (Python)**
+   - Root Directory: `AIService`
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+2. **CoreService (Go)**
+   - Root Directory: `CoreService`
+   - Build Command: `go build -o bin/server main.go`
+   - Start Command: `./bin/server`
+   - Set `AI_SERVICE_URL` to the Render URL of the deployed AIService.
