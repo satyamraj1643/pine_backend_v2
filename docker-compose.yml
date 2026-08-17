@@ -14,6 +14,12 @@ services:
     depends_on:
       - core-service
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
   core-service:
     build:
       context: ./CoreService
@@ -27,6 +33,7 @@ services:
       - PORT=8080
     depends_on:
       - ai-service
+      - redis
 
   ai-service:
     build:
@@ -39,3 +46,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  redis_data:
