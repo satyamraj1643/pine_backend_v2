@@ -54,16 +54,52 @@ go run main.go
 - `SMTP_*`: Credentials for email delivery
 - `AI_SERVICE_URL`: URL of the Python AIService (e.g. `http://localhost:8000`)
 
-## Deployment (Render)
+## Deployment (EC2 + Docker Compose)
 
-Deploy as two separate **Web Services**:
+The recommended production deployment uses Docker Compose and Caddy on a single EC2 instance. This automatically provisions SSL certificates for `api.pine.brink.co.in` and securely isolates the AI service.
 
-1. **AIService (Python)**
-   - Root Directory: `AIService`
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-2. **CoreService (Go)**
-   - Root Directory: `CoreService`
-   - Build Command: `go build -o bin/server main.go`
-   - Start Command: `./bin/server`
-   - Set `AI_SERVICE_URL` to the Render URL of the deployed AIService.
+### 1. Initial Server Setup
+SSH into your EC2 instance and install Docker:
+```bash
+# Update packages and install Docker
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2 git
+
+# Enable Docker service
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 2. Deploy the Application
+```bash
+# Clone your repository
+git clone https://github.com/satyamraj1643/pine_backend_v2.git
+cd pine_backend_v2
+
+# Configure environment variables
+cp CoreService/.env.example CoreService/.env
+cp AIService/.env.example AIService/.env
+# Edit the .env files to add your production keys (Database URL, Groq API, etc.)
+# NOTE: Inside CoreService/.env, AI_SERVICE_URL must be set to http://ai-service:8000
+nano CoreService/.env
+nano AIService/.env
+
+# Start the stack
+docker compose up -d --build
+```
+
+### 3. DNS Configuration
+Since your frontend is on `pine.brink.co.in`, you should host this backend at `api.pine.brink.co.in`. 
+In your Cloudflare (or DNS provider) dashboard, add the following:
+- **Type**: `A`
+- **Name**: `api`
+- **IPv4 address**: `34.192.254.221` (Your EC2 Elastic IP)
+- **Proxy status**: Turn Proxy (Orange Cloud) **OFF** (DNS Only). Caddy needs to communicate directly with Let's Encrypt to get the SSL certificate.
+
+Once this is set, Caddy will automatically provision a Let's Encrypt SSL certificate.
+
+You can check the logs of your services at any time using:
+```bash
+docker compose logs -f
+```

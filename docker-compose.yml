@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  caddy:
+    image: caddy:2.7.6-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - core-service
+
+  core-service:
+    build:
+      context: ./CoreService
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./CoreService/.env
+    environment:
+      # Override AI_SERVICE_URL to use Docker's internal DNS routing
+      - AI_SERVICE_URL=http://ai-service:8000
+      - PORT=8080
+    depends_on:
+      - ai-service
+
+  ai-service:
+    build:
+      context: ./AIService
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./AIService/.env
+
+volumes:
+  caddy_data:
+  caddy_config:

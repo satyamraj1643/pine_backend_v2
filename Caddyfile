@@ -1,0 +1,7 @@
+api.pine.brink.co.in {
+    # Reverse proxy all requests to the Go backend
+    reverse_proxy core-service:8080
+
+    # Optional: Enable compression for better performance
+    encode zstd gzip
+}
