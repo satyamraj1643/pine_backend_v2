@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ func fetchUserEntries(userID string, limit int) ([]aiEntryRow, error) {
 		ORDER BY e.created_at DESC
 		LIMIT $2
 	`
-	rows, err := db.Pool.Query(nil, query, userID, limit)
+	rows, err := db.Pool.Query(context.Background(), query, userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +115,7 @@ type aiMoodRow struct {
 }
 
 func fetchUserMoods(userID string) ([]aiMoodRow, error) {
-	rows, err := db.Pool.Query(nil, `SELECT id, name, emoji FROM moods WHERE user_id = $1 ORDER BY name`, userID)
+	rows, err := db.Pool.Query(context.Background(), `SELECT id, name, emoji FROM moods WHERE user_id = $1 ORDER BY name`, userID)
 	if err != nil {
 		return nil, err
 	}
