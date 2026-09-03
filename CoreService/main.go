@@ -64,6 +64,7 @@ func main() {
 	mux.Handle("DELETE /entries/delete/{id}", mw.Auth(http.HandlerFunc(handler.DeleteEntry)))
 	mux.Handle("POST /entries/archive/{id}", mw.Auth(http.HandlerFunc(handler.ArchiveEntry)))
 	mux.Handle("POST /entries/mark-favourite/{id}", mw.Auth(http.HandlerFunc(handler.MarkFavouriteEntry)))
+	mux.Handle("POST /entries/bulk", mw.Auth(http.HandlerFunc(handler.BulkUpdateEntries)))
 	// PATCH /entries/details/{id} — use a catch-all since Go 1.22+ patterns
 	mux.Handle("PATCH /entries/details/{id}", mw.Auth(http.HandlerFunc(handler.UpdateEntry)))
 

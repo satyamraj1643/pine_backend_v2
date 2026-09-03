@@ -38,6 +38,14 @@ type favouriteReq struct {
 	IsFavourite bool `json:"is_favourite"`
 }
 
+// bulkEntriesReq deliberately uses one endpoint so a selection is handled in
+// one database statement and one cache invalidation rather than N requests.
+type bulkEntriesReq struct {
+	EntryIDs    []int  `json:"entry_ids"`
+	Action      string `json:"action"`
+	IsFavourite bool   `json:"is_favourite"`
+}
+
 type chapterDTO struct {
 	ID    int    `json:"ID"`
 	Title string `json:"Title"`
@@ -456,6 +464,58 @@ func MarkFavouriteEntry(w http.ResponseWriter, r *http.Request) {
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// ─── 7. POST /entries/bulk ─────────────────────────────
+
+func BulkUpdateEntries(w http.ResponseWriter, r *http.Request) {
+	userID := helpers.GetUserID(r)
+	if userID == "" {
+		helpers.Error(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	var req bulkEntriesReq
+	if err := helpers.Decode(r, &req); err != nil || len(req.EntryIDs) == 0 || len(req.EntryIDs) > 100 {
+		helpers.Error(w, http.StatusBadRequest, "Choose between 1 and 100 entries")
+		return
+	}
+
+	ctx := r.Context()
+	var (
+		tag interface{ RowsAffected() int64 }
+		err error
+	)
+
+	switch req.Action {
+	case "archive":
+		tag, err = db.Pool.Exec(ctx,
+			`UPDATE entries SET is_archived = true, updated_at = NOW() WHERE user_id = $1 AND id = ANY($2)`,
+			userID, req.EntryIDs,
+		)
+	case "favourite":
+		tag, err = db.Pool.Exec(ctx,
+			`UPDATE entries SET is_favourite = $1, updated_at = NOW() WHERE user_id = $2 AND id = ANY($3)`,
+			req.IsFavourite, userID, req.EntryIDs,
+		)
+	case "delete":
+		tag, err = db.Pool.Exec(ctx,
+			`DELETE FROM entries WHERE user_id = $1 AND id = ANY($2)`,
+			userID, req.EntryIDs,
+		)
+	default:
+		helpers.Error(w, http.StatusBadRequest, "Unsupported bulk action")
+		return
+	}
+
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Failed to update entries")
+		return
+	}
+
+	_ = cache.DelByPrefix(ctx, "entries:"+userID)
+	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	helpers.JSON(w, http.StatusOK, map[string]int64{"updated": tag.RowsAffected()})
 }
 
 // ─── Helpers ─────────────────────────────────────────────
