@@ -17,11 +17,19 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            # Navigate to the repository
+            set -eu
+
             cd pine_backend_v2
-            
-            # Pull the latest changes from the main branch
-            git pull origin main
-            
-            # Rebuild and restart the Docker containers
-            docker compose up -d --build
+
+            git pull --ff-only origin main
+
+            # Reclaim deploy-safe Docker space. Running containers and all
+            # named volumes (Caddy and Redis data) are deliberately preserved.
+            docker builder prune --all --force
+            docker image prune --all --force
+            docker container prune --force
+
+            docker compose up -d --build --remove-orphans
+
+            # Remove dangling layers left by the previous release.
+            docker image prune --force
