@@ -33,9 +33,19 @@ func CreateChapter(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save collection")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := validateRelations(ctx, tx, userID, nil, nil, req.Collection); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "A selected tag is unavailable")
+		return
+	}
 
 	var chapterID int
-	err := db.Pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO chapters (user_id, title, description, color, is_favourite, is_archived, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, false, false, NOW(), NOW())
 		 RETURNING id`,
@@ -49,8 +59,8 @@ func CreateChapter(w http.ResponseWriter, r *http.Request) {
 	// Insert collection associations
 	if len(req.Collection) > 0 {
 		for _, colID := range req.Collection {
-			_, err := db.Pool.Exec(ctx,
-				`INSERT INTO chapter_collections (chapter_id, collection_id) VALUES ($1, $2)`,
+			_, err := tx.Exec(ctx,
+				`INSERT INTO chapter_collections (chapter_id, collection_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 				chapterID, colID,
 			)
 			if err != nil {
@@ -60,6 +70,10 @@ func CreateChapter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save collection")
+		return
+	}
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
 	_ = cache.Del(ctx, "collections:"+userID)
@@ -285,9 +299,19 @@ func UpdateChapter(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save collection")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := validateRelations(ctx, tx, userID, nil, nil, req.Collection); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "A selected tag is unavailable")
+		return
+	}
 
 	// Update chapter (verify ownership)
-	tag, err := db.Pool.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`UPDATE chapters SET title = $1, description = $2, color = $3, updated_at = NOW()
 		 WHERE id = $4 AND user_id = $5`,
 		req.Title, req.Description, req.Color, chapterID, userID,
@@ -302,7 +326,7 @@ func UpdateChapter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Replace collections: delete existing, then insert new
-	_, err = db.Pool.Exec(ctx,
+	_, err = tx.Exec(ctx,
 		`DELETE FROM chapter_collections WHERE chapter_id = $1`,
 		chapterID,
 	)
@@ -312,8 +336,8 @@ func UpdateChapter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, colID := range req.Collection {
-		_, err := db.Pool.Exec(ctx,
-			`INSERT INTO chapter_collections (chapter_id, collection_id) VALUES ($1, $2)`,
+		_, err := tx.Exec(ctx,
+			`INSERT INTO chapter_collections (chapter_id, collection_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 			chapterID, colID,
 		)
 		if err != nil {
@@ -322,6 +346,10 @@ func UpdateChapter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save collection")
+		return
+	}
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
 	_ = cache.Del(ctx, "collections:"+userID)

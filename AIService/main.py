@@ -13,8 +13,11 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# Load env variables early so LangChain tracing variables are picked up
+# Journal contents must not be exported to prompt-tracing services.
 load_dotenv()
+os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGCHAIN_TRACING"] = "false"
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel

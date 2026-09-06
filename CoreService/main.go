@@ -12,13 +12,15 @@ import (
 	"github.com/satyamraj1643/pine_backend_v2/internal/handler"
 	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
 	mw "github.com/satyamraj1643/pine_backend_v2/internal/middleware"
-
 )
 
 func main() {
-	// Load .env (overrides system env so .env is the source of truth)
-	if err := godotenv.Overload(); err != nil {
+	// Local defaults must not override production provider configuration.
+	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system env")
+	}
+	if os.Getenv("JWT_SECRET") == "" {
+		log.Fatal("JWT_SECRET must be configured before starting Pine")
 	}
 
 	// Connect to Postgres + Redis
@@ -28,8 +30,6 @@ func main() {
 	defer cache.Close()
 
 	helpers.LogSMTPConfig()
-
-
 
 	// Build the mux
 	mux := http.NewServeMux()

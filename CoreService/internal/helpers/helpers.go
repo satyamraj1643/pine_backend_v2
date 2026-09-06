@@ -1,9 +1,10 @@
 package helpers
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"os"
 	"strconv"
@@ -18,6 +19,8 @@ import (
 
 func JSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
@@ -53,12 +56,15 @@ type JWTClaims struct {
 func jwtSecret() []byte {
 	s := os.Getenv("JWT_SECRET")
 	if s == "" {
-		s = "fallback-dev-secret"
+		return nil
 	}
 	return []byte(s)
 }
 
 func GenerateJWT(userID, email string) (string, error) {
+	if len(jwtSecret()) == 0 {
+		return "", fmt.Errorf("JWT_SECRET must be configured")
+	}
 	claims := JWTClaims{
 		UserID: userID,
 		Email:  email,
@@ -72,17 +78,20 @@ func GenerateJWT(userID, email string) (string, error) {
 }
 
 func VerifyJWT(tokenStr string) (*JWTClaims, error) {
+	if len(jwtSecret()) == 0 {
+		return nil, fmt.Errorf("JWT_SECRET must be configured")
+	}
 	token, err := jwt.ParseWithClaims(tokenStr, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
 		return jwtSecret(), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}
 	claims, ok := token.Claims.(*JWTClaims)
-	if !ok || !token.Valid {
+	if !ok || !token.Valid || claims.UserID == "" {
 		return nil, fmt.Errorf("invalid token")
 	}
 	return claims, nil
@@ -90,8 +99,12 @@ func VerifyJWT(tokenStr string) (*JWTClaims, error) {
 
 // ─── OTP ─────────────────────────────────────────────────
 
-func GenerateOTP() string {
-	return fmt.Sprintf("%06d", rand.Intn(1000000))
+func GenerateOTP() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
 }
 
 // ─── URL helpers ─────────────────────────────────────────

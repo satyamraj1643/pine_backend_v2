@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"strings"
 	"time"
@@ -23,11 +24,11 @@ type createEntryReq struct {
 }
 
 type updateEntryReq struct {
-	Title      *string `json:"title"`
-	Content    *string `json:"content"`
-	Chapter    *int    `json:"chapter"`
-	Mood       *[]int  `json:"mood"`
-	Collection *[]int  `json:"collection"`
+	Title      *string         `json:"title"`
+	Content    *string         `json:"content"`
+	Chapter    json.RawMessage `json:"chapter"`
+	Mood       *[]int          `json:"mood"`
+	Collection *[]int          `json:"collection"`
 }
 
 type archiveReq struct {
@@ -96,8 +97,19 @@ func CreateEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save entry")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := validateRelations(ctx, tx, userID, req.Chapter, req.Mood, req.Collection); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "A selected collection, tag or mood is unavailable")
+		return
+	}
+
 	var entryID int
-	err := db.Pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`INSERT INTO entries (user_id, title, content, chapter_id, is_favourite, is_archived, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, false, false, NOW(), NOW())
 		 RETURNING id`,
@@ -109,19 +121,23 @@ func CreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(req.Mood) > 0 {
-		if err := insertEntryMoods(ctx, entryID, req.Mood); err != nil {
+		if err := insertEntryMoods(ctx, tx, entryID, req.Mood); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "Failed to link moods")
 			return
 		}
 	}
 
 	if len(req.Collection) > 0 {
-		if err := insertEntryCollections(ctx, entryID, req.Collection); err != nil {
+		if err := insertEntryCollections(ctx, tx, entryID, req.Collection); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "Failed to link collections")
 			return
 		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save entry")
+		return
+	}
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 	_ = cache.Del(ctx, "collections:"+userID)
@@ -292,6 +308,32 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	var chapterID *int
+	if len(req.Chapter) > 0 {
+		if err := json.Unmarshal(req.Chapter, &chapterID); err != nil {
+			helpers.Error(w, http.StatusBadRequest, "Invalid chapter")
+			return
+		}
+	}
+	var moods, collections []int
+	if req.Mood != nil {
+		moods = *req.Mood
+	}
+	if req.Collection != nil {
+		collections = *req.Collection
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save entry")
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := validateRelations(ctx, tx, userID, chapterID, moods, collections); err != nil {
+		helpers.Error(w, http.StatusBadRequest, "A selected collection, tag or mood is unavailable")
+		return
+	}
+
 	// Build dynamic SET clause.
 	setClauses := []string{}
 	args := []interface{}{}
@@ -305,9 +347,9 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 		setClauses = append(setClauses, pgArg("content", &argIdx))
 		args = append(args, *req.Content)
 	}
-	if req.Chapter != nil {
+	if len(req.Chapter) > 0 {
 		setClauses = append(setClauses, pgArg("chapter_id", &argIdx))
-		args = append(args, *req.Chapter)
+		args = append(args, chapterID)
 	}
 
 	// Always bump updated_at.
@@ -318,7 +360,7 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 		" WHERE id = $" + pgIdx(&argIdx) + " AND user_id = $" + pgIdx(&argIdx)
 	args = append(args, entryID, userID)
 
-	tag, err := db.Pool.Exec(ctx, query, args...)
+	tag, err := tx.Exec(ctx, query, args...)
 	if err != nil {
 		helpers.Error(w, http.StatusInternalServerError, "Failed to update entry")
 		return
@@ -330,7 +372,7 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	// Replace moods if provided.
 	if req.Mood != nil {
-		if err := replaceEntryMoods(ctx, entryID, *req.Mood); err != nil {
+		if err := replaceEntryMoods(ctx, tx, entryID, *req.Mood); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "Failed to update moods")
 			return
 		}
@@ -338,12 +380,16 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	// Replace collections if provided.
 	if req.Collection != nil {
-		if err := replaceEntryCollections(ctx, entryID, *req.Collection); err != nil {
+		if err := replaceEntryCollections(ctx, tx, entryID, *req.Collection); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "Failed to update collections")
 			return
 		}
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		helpers.Error(w, http.StatusInternalServerError, "Unable to save entry")
+		return
+	}
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
 	_ = cache.Del(ctx, "collections:"+userID)
@@ -530,10 +576,10 @@ func BulkUpdateEntries(w http.ResponseWriter, r *http.Request) {
 // ─── Helpers ─────────────────────────────────────────────
 
 // insertEntryMoods inserts rows into the entry_moods junction table.
-func insertEntryMoods(ctx context.Context, entryID int, moodIDs []int) error {
+func insertEntryMoods(ctx context.Context, tx pgx.Tx, entryID int, moodIDs []int) error {
 	for _, mID := range moodIDs {
-		_, err := db.Pool.Exec(ctx,
-			`INSERT INTO entry_moods (entry_id, mood_id) VALUES ($1, $2)`,
+		_, err := tx.Exec(ctx,
+			`INSERT INTO entry_moods (entry_id, mood_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 			entryID, mID,
 		)
 		if err != nil {
@@ -544,22 +590,22 @@ func insertEntryMoods(ctx context.Context, entryID int, moodIDs []int) error {
 }
 
 // replaceEntryMoods deletes existing links and inserts new ones.
-func replaceEntryMoods(ctx context.Context, entryID int, moodIDs []int) error {
-	_, err := db.Pool.Exec(ctx,
+func replaceEntryMoods(ctx context.Context, tx pgx.Tx, entryID int, moodIDs []int) error {
+	_, err := tx.Exec(ctx,
 		`DELETE FROM entry_moods WHERE entry_id = $1`,
 		entryID,
 	)
 	if err != nil {
 		return err
 	}
-	return insertEntryMoods(ctx, entryID, moodIDs)
+	return insertEntryMoods(ctx, tx, entryID, moodIDs)
 }
 
 // insertEntryCollections inserts rows into the entry_collections junction table.
-func insertEntryCollections(ctx context.Context, entryID int, collectionIDs []int) error {
+func insertEntryCollections(ctx context.Context, tx pgx.Tx, entryID int, collectionIDs []int) error {
 	for _, colID := range collectionIDs {
-		_, err := db.Pool.Exec(ctx,
-			`INSERT INTO entry_collections (entry_id, collection_id) VALUES ($1, $2)`,
+		_, err := tx.Exec(ctx,
+			`INSERT INTO entry_collections (entry_id, collection_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 			entryID, colID,
 		)
 		if err != nil {
@@ -570,15 +616,15 @@ func insertEntryCollections(ctx context.Context, entryID int, collectionIDs []in
 }
 
 // replaceEntryCollections deletes existing links and inserts new ones.
-func replaceEntryCollections(ctx context.Context, entryID int, collectionIDs []int) error {
-	_, err := db.Pool.Exec(ctx,
+func replaceEntryCollections(ctx context.Context, tx pgx.Tx, entryID int, collectionIDs []int) error {
+	_, err := tx.Exec(ctx,
 		`DELETE FROM entry_collections WHERE entry_id = $1`,
 		entryID,
 	)
 	if err != nil {
 		return err
 	}
-	return insertEntryCollections(ctx, entryID, collectionIDs)
+	return insertEntryCollections(ctx, tx, entryID, collectionIDs)
 }
 
 // pgArg returns a "column = $N" fragment and increments the counter.
