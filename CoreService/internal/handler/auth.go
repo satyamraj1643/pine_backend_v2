@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/satyamraj1643/pine_backend_v2/internal/cache"
 	"github.com/satyamraj1643/pine_backend_v2/internal/db"
 	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
 )
@@ -252,7 +253,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 func Validate(w http.ResponseWriter, r *http.Request) {
 
 	userID := helpers.GetUserID(r)
-	
+
 	if userID == "" {
 		helpers.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -384,6 +385,7 @@ func DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = cache.Del(ctx, "entries:"+userID, "chapters:"+userID, "collections:"+userID, "moods:"+userID)
 	log.Printf("delete-account: user %s deleted", userID)
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{
 		"deleted": true,

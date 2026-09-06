@@ -124,6 +124,7 @@ func CreateEntry(w http.ResponseWriter, r *http.Request) {
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 
 	helpers.JSON(w, http.StatusCreated, map[string]interface{}{"created": true, "id": entryID})
 }
@@ -141,7 +142,8 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 	cacheKey := "entries:" + userID + ":edited-v1"
 
 	// Check cache first.
-	if cached, err := cache.Get(ctx, cacheKey); err == nil && cached != "" {
+	cached, revision, cacheErr := cache.Read(ctx, cacheKey)
+	if cacheErr == nil && cached != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(cached))
@@ -260,7 +262,7 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store in cache with 5 min TTL.
-	_ = cache.Set(ctx, cacheKey, string(data), 5*time.Minute)
+	_ = cache.SetIfRevision(ctx, cacheKey, revision, string(data), 5*time.Minute)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -344,6 +346,7 @@ func UpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
@@ -380,6 +383,7 @@ func DeleteEntry(w http.ResponseWriter, r *http.Request) {
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -422,6 +426,7 @@ func ArchiveEntry(w http.ResponseWriter, r *http.Request) {
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
@@ -464,6 +469,7 @@ func MarkFavouriteEntry(w http.ResponseWriter, r *http.Request) {
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]bool{"success": true})
 }
@@ -517,6 +523,7 @@ func BulkUpdateEntries(w http.ResponseWriter, r *http.Request) {
 
 	_ = cache.DelByPrefix(ctx, "entries:"+userID)
 	_ = cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 	helpers.JSON(w, http.StatusOK, map[string]int64{"updated": tag.RowsAffected()})
 }
 

@@ -57,23 +57,60 @@ func Get(ctx context.Context, key string) (string, error) {
 	return RDB.Get(ctx, key).Result()
 }
 
-// Del removes keys.
-func Del(ctx context.Context, keys ...string) error {
-	return RDB.Del(ctx, keys...).Err()
+// Cache revisions prevent an in-flight pre-mutation read from resurrecting stale data.
+func revisionKey(key string) string {
+	parts := strings.Split(key, ":")
+	if len(parts) >= 2 {
+		return "cache-revision:" + parts[0] + ":" + parts[1]
+	}
+	return "cache-revision:" + key
 }
 
-// DelByPrefix removes all keys matching a prefix.
+var readScript = redis.NewScript(`
+return {redis.call('GET', KEYS[1]) or '0', redis.call('GET', KEYS[2]) or ''}
+`)
+
+func Read(ctx context.Context, key string) (string, string, error) {
+	values, err := readScript.Run(ctx, RDB, []string{revisionKey(key), key}).Slice()
+	if err != nil {
+		return "", "", err
+	}
+	return values[1].(string), values[0].(string), nil
+}
+
+var fillScript = redis.NewScript(`
+if (redis.call('GET', KEYS[1]) or '0') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+return 1
+`)
+
+func SetIfRevision(ctx context.Context, key, revision string, value interface{}, ttl time.Duration) error {
+	// If reading the revision failed, never publish an unverifiable snapshot.
+	if revision == "" {
+		return nil
+	}
+	return fillScript.Run(ctx, RDB, []string{revisionKey(key), key}, revision, value, ttl.Milliseconds()).Err()
+}
+
+var invalidateScript = redis.NewScript(`
+redis.call('INCR', KEYS[1])
+return redis.call('DEL', KEYS[2], KEYS[3])
+`)
+
+// All existing list formats: legacy clients and EditedAt-aware clients.
 func DelByPrefix(ctx context.Context, prefix string) error {
-	iter := RDB.Scan(ctx, 0, prefix+"*", 100).Iterator()
-	var keys []string
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
+	err := invalidateScript.Run(ctx, RDB, []string{revisionKey(prefix), prefix, prefix + ":edited-v1"}).Err()
+	if err != nil {
+		log.Printf("Cache invalidation failed: %v", err)
 	}
-	if err := iter.Err(); err != nil {
-		return err
-	}
-	if len(keys) > 0 {
-		return RDB.Del(ctx, keys...).Err()
+	return err
+}
+
+func Del(ctx context.Context, keys ...string) error {
+	for _, key := range keys {
+		if err := DelByPrefix(ctx, key); err != nil {
+			return err
+		}
 	}
 	return nil
 }

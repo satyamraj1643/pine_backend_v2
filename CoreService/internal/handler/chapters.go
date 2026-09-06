@@ -62,6 +62,7 @@ func CreateChapter(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 	cache.DelByPrefix(ctx, "entries:"+userID)
 
 	helpers.JSON(w, http.StatusCreated, map[string]interface{}{
@@ -83,8 +84,8 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 
 	// Try cache first
 	cacheKey := "chapters:" + userID + ":edited-v1"
-	cached, err := cache.Get(ctx, cacheKey)
-	if err == nil && cached != "" {
+	cached, revision, cacheErr := cache.Read(ctx, cacheKey)
+	if cacheErr == nil && cached != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(cached))
@@ -153,110 +154,91 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For each chapter, fetch collections and entries
+	// Load related records in three batched queries, rather than per chapter/entry.
+	chapterIndex := make(map[int]int, len(chapters))
 	for i := range chapters {
-		// Fetch chapter collections
-		colRows, err := db.Pool.Query(ctx,
-			`SELECT c.id, c.name, c.color
-			 FROM collections c
-			 INNER JOIN chapter_collections cc ON cc.collection_id = c.id
-			 WHERE cc.chapter_id = $1`,
-			chapters[i].ID,
-		)
+		chapterIndex[chapters[i].ID] = i
+		chapters[i].Collections = []CollectionItem{}
+		chapters[i].Entries = []EntryItem{}
+	}
+	if len(chapters) > 0 {
+		tags, err := db.Pool.Query(ctx, `SELECT cc.chapter_id, c.id, c.name, c.color
+     FROM chapter_collections cc JOIN collections c ON c.id = cc.collection_id
+     JOIN chapters ch ON ch.id = cc.chapter_id WHERE ch.user_id = $1 ORDER BY c.id`, userID)
 		if err != nil {
-			helpers.Error(w, http.StatusInternalServerError, "failed to fetch chapter collections")
+			helpers.Error(w, http.StatusInternalServerError, "failed to fetch chapter tags")
 			return
 		}
-
-		var cols []CollectionItem
-		for colRows.Next() {
-			var col CollectionItem
-			if err := colRows.Scan(&col.ID, &col.Name, &col.Color); err != nil {
-				colRows.Close()
-				helpers.Error(w, http.StatusInternalServerError, "failed to scan collection")
+		for tags.Next() {
+			var id int
+			var tag CollectionItem
+			if err := tags.Scan(&id, &tag.ID, &tag.Name, &tag.Color); err != nil {
+				tags.Close()
+				helpers.Error(w, http.StatusInternalServerError, "failed to scan chapter tags")
 				return
 			}
-			cols = append(cols, col)
+			if i, ok := chapterIndex[id]; ok {
+				chapters[i].Collections = append(chapters[i].Collections, tag)
+			}
 		}
-		colRows.Close()
-		if err := colRows.Err(); err != nil {
-			helpers.Error(w, http.StatusInternalServerError, "failed to iterate collections")
+		tags.Close()
+		if tags.Err() != nil {
+			helpers.Error(w, http.StatusInternalServerError, "failed to read chapter tags")
 			return
 		}
-		if cols == nil {
-			cols = []CollectionItem{}
-		}
-		chapters[i].Collections = cols
 
-		// Fetch entries for this chapter
-		entryRows, err := db.Pool.Query(ctx,
-			`SELECT id, title, content, is_favourite, is_archived, created_at, updated_at,
-			 COALESCE((to_jsonb(entries)->>'edited_at')::timestamptz, updated_at, created_at) AS edit_time
-			 FROM entries
-			 WHERE chapter_id = $1 AND user_id = $2
-			 ORDER BY edit_time DESC, id DESC`,
-			chapters[i].ID, userID,
-		)
+		entryRows, err := db.Pool.Query(ctx, `SELECT chapter_id, id, title, content, is_favourite, is_archived, created_at, updated_at,
+     COALESCE((to_jsonb(entries)->>'edited_at')::timestamptz, updated_at, created_at) AS edit_time
+     FROM entries WHERE user_id = $1 AND chapter_id IS NOT NULL ORDER BY edit_time DESC, id DESC`, userID)
 		if err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "failed to fetch entries")
 			return
 		}
-
-		var entries []EntryItem
+		entryIndex := make(map[int][2]int)
 		for entryRows.Next() {
+			var chapterID int
 			var e EntryItem
-			if err := entryRows.Scan(&e.ID, &e.Title, &e.Content, &e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt, &e.EditedAt); err != nil {
+			if err := entryRows.Scan(&chapterID, &e.ID, &e.Title, &e.Content, &e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt, &e.EditedAt); err != nil {
 				entryRows.Close()
 				helpers.Error(w, http.StatusInternalServerError, "failed to scan entry")
 				return
 			}
-			entries = append(entries, e)
+			if i, ok := chapterIndex[chapterID]; ok {
+				e.Collections = []CollectionItem{}
+				entryIndex[e.ID] = [2]int{i, len(chapters[i].Entries)}
+				chapters[i].Entries = append(chapters[i].Entries, e)
+			}
 		}
 		entryRows.Close()
-		if err := entryRows.Err(); err != nil {
-			helpers.Error(w, http.StatusInternalServerError, "failed to iterate entries")
+		if entryRows.Err() != nil {
+			helpers.Error(w, http.StatusInternalServerError, "failed to read entries")
 			return
 		}
-
-		// For each entry, fetch its collections
-		for j := range entries {
-			ecRows, err := db.Pool.Query(ctx,
-				`SELECT c.id, c.name, c.color
-				 FROM collections c
-				 INNER JOIN entry_collections ec ON ec.collection_id = c.id
-				 WHERE ec.entry_id = $1`,
-				entries[j].ID,
-			)
-			if err != nil {
-				helpers.Error(w, http.StatusInternalServerError, "failed to fetch entry collections")
+		entryTags, err := db.Pool.Query(ctx, `SELECT ec.entry_id, c.id, c.name, c.color
+     FROM entry_collections ec JOIN collections c ON c.id = ec.collection_id
+     JOIN entries e ON e.id = ec.entry_id WHERE e.user_id = $1 AND e.chapter_id IS NOT NULL ORDER BY c.id`, userID)
+		if err != nil {
+			helpers.Error(w, http.StatusInternalServerError, "failed to fetch entry tags")
+			return
+		}
+		for entryTags.Next() {
+			var id int
+			var tag CollectionItem
+			if err := entryTags.Scan(&id, &tag.ID, &tag.Name, &tag.Color); err != nil {
+				entryTags.Close()
+				helpers.Error(w, http.StatusInternalServerError, "failed to scan entry tags")
 				return
 			}
-
-			var eCols []CollectionItem
-			for ecRows.Next() {
-				var col CollectionItem
-				if err := ecRows.Scan(&col.ID, &col.Name, &col.Color); err != nil {
-					ecRows.Close()
-					helpers.Error(w, http.StatusInternalServerError, "failed to scan entry collection")
-					return
-				}
-				eCols = append(eCols, col)
+			if index, ok := entryIndex[id]; ok {
+				item := &chapters[index[0]].Entries[index[1]]
+				item.Collections = append(item.Collections, tag)
 			}
-			ecRows.Close()
-			if err := ecRows.Err(); err != nil {
-				helpers.Error(w, http.StatusInternalServerError, "failed to iterate entry collections")
-				return
-			}
-			if eCols == nil {
-				eCols = []CollectionItem{}
-			}
-			entries[j].Collections = eCols
 		}
-
-		if entries == nil {
-			entries = []EntryItem{}
+		entryTags.Close()
+		if entryTags.Err() != nil {
+			helpers.Error(w, http.StatusInternalServerError, "failed to read entry tags")
+			return
 		}
-		chapters[i].Entries = entries
 	}
 
 	if chapters == nil {
@@ -269,7 +251,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 
 	// Store in cache (10 min TTL)
 	if encoded, err := json.Marshal(resp); err == nil {
-		cache.Set(ctx, cacheKey, string(encoded), 10*time.Minute)
+		cache.SetIfRevision(ctx, cacheKey, revision, string(encoded), 10*time.Minute)
 	}
 
 	helpers.JSON(w, http.StatusOK, resp)
@@ -342,6 +324,7 @@ func UpdateChapter(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 	cache.DelByPrefix(ctx, "entries:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{
@@ -382,6 +365,7 @@ func DeleteChapter(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 	cache.DelByPrefix(ctx, "entries:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{
@@ -431,6 +415,7 @@ func ArchiveChapter(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 	cache.DelByPrefix(ctx, "entries:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{
@@ -480,6 +465,7 @@ func MarkFavouriteChapter(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate cache
 	cache.DelByPrefix(ctx, "chapters:"+userID)
+	_ = cache.Del(ctx, "collections:"+userID)
 	cache.DelByPrefix(ctx, "entries:"+userID)
 
 	helpers.JSON(w, http.StatusOK, map[string]interface{}{

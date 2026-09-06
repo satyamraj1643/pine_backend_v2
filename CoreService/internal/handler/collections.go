@@ -69,7 +69,8 @@ func GetAllCollections(w http.ResponseWriter, r *http.Request) {
 	cacheKey := "collections:" + userID
 
 	// Try cache first
-	if cached, err := cache.Get(ctx, cacheKey); err == nil {
+	cached, revision, cacheErr := cache.Read(ctx, cacheKey)
+	if cacheErr == nil && cached != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(cached))
@@ -120,7 +121,7 @@ func GetAllCollections(w http.ResponseWriter, r *http.Request) {
 
 	// Store in cache
 	if data, err := json.Marshal(resp); err == nil {
-		_ = cache.Set(ctx, cacheKey, data, 5*time.Minute)
+		_ = cache.SetIfRevision(ctx, cacheKey, revision, data, 5*time.Minute)
 	}
 
 	helpers.JSON(w, http.StatusOK, resp)
