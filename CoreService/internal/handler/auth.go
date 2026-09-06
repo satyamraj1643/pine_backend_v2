@@ -250,7 +250,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 // ─── GET /auth/validate ──────────────────────────────────
 
 func Validate(w http.ResponseWriter, r *http.Request) {
+
 	userID := helpers.GetUserID(r)
+	
 	if userID == "" {
 		helpers.Error(w, http.StatusUnauthorized, "unauthorized")
 		return

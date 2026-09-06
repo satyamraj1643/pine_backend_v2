@@ -1,0 +1,25 @@
+services:
+    redis:
+      image: redis:7-alpine
+
+    ai-service:
+      build: ./AIService
+      env_file:
+        - ./AIService/.env
+      ports:
+        - "127.0.0.1:8000:8000"
+
+    core-service:
+      build: ./CoreService
+      env_file:
+        - ./CoreService/.env
+      environment:
+        PORT: "8080"
+        AI_SERVICE_URL: http://ai-service:8000
+        REDIS_URL: redis://redis:6379
+        ALLOWED_ORIGINS: http://localhost:3000
+      ports:
+        - "127.0.0.1:8080:8080"
+      depends_on:
+        - redis
+        - ai-service

@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
-
 	"github.com/satyamraj1643/pine_backend_v2/internal/helpers"
 )
 
 // allowedOrigin returns the request origin if it's in our whitelist.
 // Origins are read from the ALLOWED_ORIGINS env var (comma-separated).
 // Supports '*' wildcard (reflects origin), case-insensitive matching, and trims trailing slashes.
+
 func allowedOrigin(origin string) string {
 	if origin == "" {
 		return ""
