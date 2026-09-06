@@ -118,6 +118,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 		Collections []CollectionItem `json:"Collections"`
 		IsFavourite bool             `json:"IsFavourite"`
 		IsArchived  bool             `json:"IsArchived"`
+		CreatedAt   time.Time        `json:"CreatedAt"`
 		UpdatedAt   time.Time        `json:"UpdatedAt"`
 	}
 
@@ -186,7 +187,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 
 		// Fetch entries for this chapter
 		entryRows, err := db.Pool.Query(ctx,
-			`SELECT id, title, content, is_favourite, is_archived, updated_at
+			`SELECT id, title, content, is_favourite, is_archived, created_at, updated_at
 			 FROM entries
 			 WHERE chapter_id = $1 AND user_id = $2
 			 ORDER BY updated_at DESC`,
@@ -200,7 +201,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 		var entries []EntryItem
 		for entryRows.Next() {
 			var e EntryItem
-			if err := entryRows.Scan(&e.ID, &e.Title, &e.Content, &e.IsFavourite, &e.IsArchived, &e.UpdatedAt); err != nil {
+			if err := entryRows.Scan(&e.ID, &e.Title, &e.Content, &e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt); err != nil {
 				entryRows.Close()
 				helpers.Error(w, http.StatusInternalServerError, "failed to scan entry")
 				return
