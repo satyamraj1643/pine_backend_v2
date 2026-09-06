@@ -76,6 +76,7 @@ type entryDTO struct {
 	IsArchived  bool            `json:"IsArchived"`
 	CreatedAt   time.Time       `json:"CreatedAt"`
 	UpdatedAt   time.Time       `json:"UpdatedAt"`
+	EditedAt    time.Time       `json:"EditedAt"`
 }
 
 // ─── 1. POST /entries/create-new ─────────────────────────
@@ -137,7 +138,7 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	cacheKey := "entries:" + userID
+	cacheKey := "entries:" + userID + ":edited-v1"
 
 	// Check cache first.
 	if cached, err := cache.Get(ctx, cacheKey); err == nil && cached != "" {
@@ -152,11 +153,12 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 		`SELECT
 			e.id, e.title, e.content,
 			ch.id, ch.title, ch.color,
-			e.is_favourite, e.is_archived, e.created_at, e.updated_at
+			e.is_favourite, e.is_archived, e.created_at, e.updated_at,
+			COALESCE((to_jsonb(e)->>'edited_at')::timestamptz, e.updated_at, e.created_at) AS edit_time
 		 FROM entries e
 		 LEFT JOIN chapters ch ON ch.id = e.chapter_id
 		 WHERE e.user_id = $1
-		 ORDER BY e.updated_at DESC`,
+		 ORDER BY edit_time DESC, e.id DESC`,
 		userID,
 	)
 	if err != nil {
@@ -175,7 +177,7 @@ func GetAllEntries(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(
 			&e.ID, &e.Title, &e.Content,
 			&chID, &chTitle, &chColor,
-			&e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt,
+			&e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt, &e.EditedAt,
 		); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "Failed to scan entry")
 			return

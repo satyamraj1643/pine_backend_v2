@@ -82,7 +82,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Try cache first
-	cacheKey := "chapters:" + userID
+	cacheKey := "chapters:" + userID + ":edited-v1"
 	cached, err := cache.Get(ctx, cacheKey)
 	if err == nil && cached != "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -93,10 +93,11 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch chapters
 	rows, err := db.Pool.Query(ctx,
-		`SELECT id, title, description, color, is_favourite, is_archived, created_at, updated_at
+		`SELECT id, title, description, color, is_favourite, is_archived, created_at, updated_at,
+		 COALESCE((to_jsonb(chapters)->>'edited_at')::timestamptz, updated_at, created_at) AS edit_time
 		 FROM chapters
 		 WHERE user_id = $1
-		 ORDER BY updated_at DESC`,
+		 ORDER BY edit_time DESC, id DESC`,
 		userID,
 	)
 	if err != nil {
@@ -120,6 +121,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 		IsArchived  bool             `json:"IsArchived"`
 		CreatedAt   time.Time        `json:"CreatedAt"`
 		UpdatedAt   time.Time        `json:"UpdatedAt"`
+		EditedAt    time.Time        `json:"EditedAt"`
 	}
 
 	type ChapterItem struct {
@@ -133,13 +135,14 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 		IsArchived  bool             `json:"IsArchived"`
 		CreatedAt   time.Time        `json:"CreatedAt"`
 		UpdatedAt   time.Time        `json:"UpdatedAt"`
+		EditedAt    time.Time        `json:"EditedAt"`
 	}
 
 	var chapters []ChapterItem
 
 	for rows.Next() {
 		var ch ChapterItem
-		if err := rows.Scan(&ch.ID, &ch.Title, &ch.Description, &ch.Color, &ch.IsFavourite, &ch.IsArchived, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.Title, &ch.Description, &ch.Color, &ch.IsFavourite, &ch.IsArchived, &ch.CreatedAt, &ch.UpdatedAt, &ch.EditedAt); err != nil {
 			helpers.Error(w, http.StatusInternalServerError, "failed to scan chapter")
 			return
 		}
@@ -187,10 +190,11 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 
 		// Fetch entries for this chapter
 		entryRows, err := db.Pool.Query(ctx,
-			`SELECT id, title, content, is_favourite, is_archived, created_at, updated_at
+			`SELECT id, title, content, is_favourite, is_archived, created_at, updated_at,
+			 COALESCE((to_jsonb(entries)->>'edited_at')::timestamptz, updated_at, created_at) AS edit_time
 			 FROM entries
 			 WHERE chapter_id = $1 AND user_id = $2
-			 ORDER BY updated_at DESC`,
+			 ORDER BY edit_time DESC, id DESC`,
 			chapters[i].ID, userID,
 		)
 		if err != nil {
@@ -201,7 +205,7 @@ func GetAllChapters(w http.ResponseWriter, r *http.Request) {
 		var entries []EntryItem
 		for entryRows.Next() {
 			var e EntryItem
-			if err := entryRows.Scan(&e.ID, &e.Title, &e.Content, &e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			if err := entryRows.Scan(&e.ID, &e.Title, &e.Content, &e.IsFavourite, &e.IsArchived, &e.CreatedAt, &e.UpdatedAt, &e.EditedAt); err != nil {
 				entryRows.Close()
 				helpers.Error(w, http.StatusInternalServerError, "failed to scan entry")
 				return
